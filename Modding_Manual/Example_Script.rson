@@ -1,0 +1,847 @@
+{
+    "FileID": 573785173,
+    "FileVersion": 8,
+    "ViewPos.x": 224,
+    "ViewPos.y": 31,
+    "ScriptName": "",
+    "ScriptFileOut": "",
+    "ScriptTextOut": "",
+    "LangDatIn": "",
+    "LangDatOut": "",
+    "MainDatIn": "",
+    "MainDatOut": "",
+    "CacheDatIn": "",
+    "CacheDatOut": "",
+    "ExportLangTxt": false,
+    "ExportLangDat": false,
+    "Visual.Objects": 
+    [
+        {
+            "DialogAnswers": 
+            [
+                {
+                    "Type": "TDialogAnswer",
+                    "Name": "",
+                    "Pos.x": 2140,
+                    "Pos.y": 300,
+                    "Parent": -1,
+                    "#": 9,
+                    "Msg": "Рыбу не убить! Она бессмертна!",
+                    "AMsg.Num": "0"
+                },
+                {
+                    "Type": "TDialogAnswer",
+                    "Name": "",
+                    "Pos.x": 2120,
+                    "Pos.y": 300,
+                    "Parent": -1,
+                    "#": 10,
+                    "Msg": "Я к ней не отношусь",
+                    "AMsg.Num": "1"
+                },
+                {
+                    "Type": "TDialogAnswer",
+                    "Name": "hangar",
+                    "Pos.x": 2070,
+                    "Pos.y": 340,
+                    "Parent": -1,
+                    "#": 13,
+                    "Msg": "Уже ушел!",
+                    "AMsg.Num": "2"
+                },
+                {
+                    "Type": "TDialogAnswer",
+                    "Name": "",
+                    "Pos.x": 2140,
+                    "Pos.y": 350,
+                    "Parent": -1,
+                    "#": 15,
+                    "Msg": "Уже иду!",
+                    "AMsg.Num": "3"
+                },
+                {
+                    "Type": "TDialogAnswer",
+                    "Name": "restart",
+                    "Pos.x": 2130,
+                    "Pos.y": 410,
+                    "Parent": -1,
+                    "#": 20,
+                    "Msg": "Пасиба!",
+                    "AMsg.Num": "4"
+                },
+                {
+                    "Type": "TDialogAnswer",
+                    "Name": "hangar",
+                    "Pos.x": 2150,
+                    "Pos.y": 410,
+                    "Parent": -1,
+                    "#": 22,
+                    "Msg": "Злые вы :(",
+                    "AMsg.Num": "5"
+                }
+            ],
+            "DialogMessages": 
+            [
+                {
+                    "Type": "TDialogMsg",
+                    "Name": "",
+                    "Pos.x": 2130,
+                    "Pos.y": 280,
+                    "Parent": -1,
+                    "#": 8,
+                    "Msg": "Здравствуйте, рейнджер <ShortName(Player())>! Разрешите поинтересоваться, как вы относитесь к рыбе?",
+                    "DMsg.Num": "0"
+                },
+                {
+                    "Type": "TDialogMsg",
+                    "Name": "",
+                    "Pos.x": 2120,
+                    "Pos.y": 320,
+                    "Parent": -1,
+                    "#": 11,
+                    "Msg": "Ну вот и иди отсюда, раз не имеешь отношения!",
+                    "DMsg.Num": "1"
+                },
+                {
+                    "Type": "TDialogMsg",
+                    "Name": "",
+                    "Pos.x": 2140,
+                    "Pos.y": 320,
+                    "Parent": -1,
+                    "#": 12,
+                    "Msg": "Отлично! Значит, пойдешь ее ловить.",
+                    "DMsg.Num": "2"
+                },
+                {
+                    "Type": "TDialogMsg",
+                    "Name": "",
+                    "Pos.x": 2150,
+                    "Pos.y": 390,
+                    "Parent": -1,
+                    "#": 18,
+                    "Msg": "Ты не молодец, конфетку не получишь!",
+                    "DMsg.Num": "3"
+                },
+                {
+                    "Type": "TDialogMsg",
+                    "Name": "",
+                    "Pos.x": 2130,
+                    "Pos.y": 390,
+                    "Parent": -1,
+                    "#": 19,
+                    "Msg": "Ты молодец! Получи конфетку.",
+                    "DMsg.Num": "4"
+                }
+            ],
+            "Dialogs": 
+            [
+                {
+                    "Type": "TDialog",
+                    "Name": "DialogGoverment",
+                    "Pos.x": 2120,
+                    "Pos.y": 250,
+                    "Parent": -1,
+                    "#": 7
+                }
+            ],
+            "Groups": 
+            [
+                {
+                    "Type": "TGroup",
+                    "Name": "GroupNew",
+                    "Pos.x": 1130,
+                    "Pos.y": 690,
+                    "Parent": -1,
+                    "#": 3,
+                    "Owner": 62,
+                    "Group.Type": 126,
+                    "CntShipMin": 1,
+                    "CntShipMax": 1,
+                    "SpeedMin": 100,
+                    "SpeedMax": 10000,
+                    "Weapon": 0,
+                    "CargoHook": 0,
+                    "EmptySpace": 0,
+                    "AddPlayer": true,
+                    "StatusTraderMin": 0,
+                    "StatusTraderMax": 100,
+                    "StatusWarriorMin": 0,
+                    "StatusWarriorMax": 100,
+                    "StatusPirateMin": 0,
+                    "StatusPirateMax": 100,
+                    "DistSearch": 10000,
+                    "Dialog": -1,
+                    "StrengthMin": "0",
+                    "StrengthMax": "0",
+                    "Ruins": ""
+                }
+            ],
+            "Operations": 
+            [
+                {
+                    "Type": "Top",
+                    "Name": "",
+                    "Pos.x": 540,
+                    "Pos.y": 690,
+                    "Parent": -1,
+                    "#": 5,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "GRun()"
+                    ]
+                },
+                {
+                    "Type": "Top",
+                    "Name": "",
+                    "Pos.x": 2180,
+                    "Pos.y": 350,
+                    "Parent": -1,
+                    "#": 14,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "StartTextQuest('Fishingcup.qmm','Задание выполнено','Задание провалено');",
+                        "SFT('You have just started TQ!');",
+                        "//Первый аргумент в StartTextQuest - название запускаемого текстового квеста в кавычках.",
+                        "//На заметку: самостоятельная строка текста ВСЕГДА пишется в кавычках. Если текст написан без кавычек, значит, скрипт попытается взять текст из переменной с этим именем.",
+                        "//Второй аргумент - текст при выполнении квеста.",
+                        "//Третий аргумент - текст при провале квеста. Их я оставил без изменений.",
+                        "//Функция SFT выводит в лог игры текст, первый и единственный аргумент - выводимый текст. "
+                    ]
+                },
+                {
+                    "Type": "Top",
+                    "Name": "",
+                    "Pos.x": 2100,
+                    "Pos.y": 410,
+                    "Parent": -1,
+                    "#": 21,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "mm_gift=CreateMM();",
+                        "//В эти скобки введи номер ММ, который хочешь выдать игроку. Что делает функция, пояснения, думаю, не нужны.",
+                        "AddItemToShip(Player(),mm_gift);",
+                        "//Эта функция выдает кораблю А предмет Б.",
+                        "ShipOut(Player());",
+                        "//ShipOut() выводит корабль из скрипта.",
+                        "//ВАЖНО: не забывай выводить корабли из скрипта, особенно NPC.",
+                        "//Если они в конце больше не нужны - просто уничтожь через ShipDestroy(ship)."
+                    ]
+                },
+                {
+                    "Type": "Top",
+                    "Name": "",
+                    "Pos.x": 2190,
+                    "Pos.y": 410,
+                    "Parent": -1,
+                    "#": 23,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "OrderTakeOff(Player());",
+                        "ForceNextDay();",
+                        "ShipOut(Player());",
+                        "//OrderTakeOff() - приказ кораблю взлететь. В аргументах мы пишем только взлетающий корабль.",
+                        "//ВАЖНО: \"Player()\" мы всегда пишем со скобками, так как Player() - это функция, возвращающая игрока.",
+                        "//ForceNextDay() - запускает следующий ход, аргументы не нужны.",
+                        "//ShipOut() - выводит из скрипта корабль, этот корабль и является аргументом.",
+                        "//ВАЖНО: к концу скрипта не забывай выводить из скрипта игрока и, особенно, прочих его участников.",
+                        "//Если эти участники больше не нужны, то уничтожай через ShipDestroy(ship). "
+                    ]
+                },
+                {
+                    "Type": "Top",
+                    "Name": "",
+                    "Pos.x": 2070,
+                    "Pos.y": 360,
+                    "Parent": -1,
+                    "#": 24,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "ShipOut(Player())"
+                    ]
+                },
+                {
+                    "Type": "Top",
+                    "Name": "",
+                    "Pos.x": 1930,
+                    "Pos.y": 40,
+                    "Parent": -1,
+                    "#": 27,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "AddDialogOverride(DialogGoverment,30)",
+                        "//Заменяет стандартную приветственную реплику на новую."
+                    ]
+                }
+            ],
+            "Planets": 
+            [
+                {
+                    "Type": "TPlanet",
+                    "Name": "QuestPlanet",
+                    "Pos.x": 400,
+                    "Pos.y": 240,
+                    "Parent": -1,
+                    "#": 0,
+                    "Race": 62,
+                    "Owner": 62,
+                    "Economy": 14,
+                    "Goverment": 62,
+                    "RangeMin": 0,
+                    "RangeMax": 100,
+                    "Dialog": -1
+                }
+            ],
+            "Ships": 
+            [
+                {
+                    "Type": "TStarShip",
+                    "Name": "",
+                    "Pos.x": 1160,
+                    "Pos.y": 230,
+                    "Parent": -1,
+                    "#": 2,
+                    "Count": 1,
+                    "Owner": 62,
+                    "Ship.Type": 126,
+                    "Player": true,
+                    "SpeedMin": 0,
+                    "SpeedMax": 10000,
+                    "Weapon": 0,
+                    "CargoHook": 0,
+                    "EmptySpace": 0,
+                    "StatusTraderMin": 0,
+                    "StatusTraderMax": 100,
+                    "StatusWarriorMin": 0,
+                    "StatusWarriorMax": 100,
+                    "StatusPirateMin": 0,
+                    "StatusPirateMax": 100,
+                    "StrengthMin": "0",
+                    "StrengthMax": "0",
+                    "Ruins": ""
+                }
+            ],
+            "Stars": 
+            [
+                {
+                    "Type": "TStar",
+                    "Name": "QuestStar",
+                    "Pos.x": 500,
+                    "Pos.y": 240,
+                    "Parent": -1,
+                    "#": 1,
+                    "Constellation": 0,
+                    "Priority": 0,
+                    "NoKling": false,
+                    "NoComeKling": false
+                }
+            ],
+            "Statements": 
+            [
+                {
+                    "Type": "Tif",
+                    "Name": "",
+                    "Pos.x": 490,
+                    "Pos.y": 690,
+                    "Parent": -1,
+                    "#": 6,
+                    "Code.Type": "Global",
+                    "Code": 
+                    [
+                        "1"
+                    ]
+                },
+                {
+                    "Type": "Tif",
+                    "Name": "",
+                    "Pos.x": 2130,
+                    "Pos.y": 370,
+                    "Parent": -1,
+                    "#": 16,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "GQuestStatus==2"
+                    ]
+                },
+                {
+                    "Type": "Tif",
+                    "Name": "",
+                    "Pos.x": 2150,
+                    "Pos.y": 370,
+                    "Parent": -1,
+                    "#": 17,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "GQuestStatus==3"
+                    ]
+                },
+                {
+                    "Type": "Tif",
+                    "Name": "",
+                    "Pos.x": 1870,
+                    "Pos.y": 40,
+                    "Parent": -1,
+                    "#": 25,
+                    "Code.Type": "DialogBegin",
+                    "Code": 
+                    [
+                        "GetShipRuins(Player())>0",
+                        "//Проверяет, находится ли игрок на станции вообще.",
+                        "//Не забываем ставить первому оператору в блоке тег DialogBegin, если мы планируем запустить диалог!"
+                    ]
+                },
+                {
+                    "Type": "Tif",
+                    "Name": "",
+                    "Pos.x": 1900,
+                    "Pos.y": 40,
+                    "Parent": -1,
+                    "#": 26,
+                    "Code.Type": "Turn",
+                    "Code": 
+                    [
+                        "ShipType(GetShipRuins(Player()))=='SB'",
+                        "//Мы проверяем, является ли станция, к которой пристыковался игрок, научной базой."
+                    ]
+                }
+            ],
+            "States": 
+            [
+                {
+                    "Type": "TState",
+                    "Name": "StateNew",
+                    "Pos.x": 1230,
+                    "Pos.y": 690,
+                    "Parent": -1,
+                    "#": 4,
+                    "Move": 0,
+                    "MoveObj": -1,
+                    "Attack.Count": 0,
+                    "TakeItem": -1,
+                    "TakeAllItem": false,
+                    "OnTalk": "",
+                    "OnActCode": "",
+                    "EType": 1,
+                    "EUnique": "",
+                    "EMsg": ""
+                }
+            ]
+        }
+    ],
+    "Visual.Links": 
+    [
+        {
+            "Type": "TGraphLink",
+            "Begin": 0,
+            "End": 1,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 2,
+            "End": 1,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 3,
+            "End": 4,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 3,
+            "End": 0,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 6,
+            "End": 5,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 7,
+            "End": 8,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 8,
+            "End": 10,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 8,
+            "End": 9,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 10,
+            "End": 11,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 9,
+            "End": 12,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 11,
+            "End": 13,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 12,
+            "End": 15,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 15,
+            "End": 14,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 15,
+            "End": 16,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 15,
+            "End": 17,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 17,
+            "End": 18,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 16,
+            "End": 19,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 20,
+            "End": 21,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 19,
+            "End": 20,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 18,
+            "End": 22,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 22,
+            "End": 23,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 13,
+            "End": 24,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 25,
+            "End": 26,
+            "Nom": 0,
+            "Arrow": true
+        },
+        {
+            "Type": "TGraphLink",
+            "Begin": 26,
+            "End": 27,
+            "Nom": 0,
+            "Arrow": true
+        }
+    ],
+    "Rect.Text": 
+    [
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 318,
+            "Rect.Top": 215,
+            "Rect.Right": 1045,
+            "Rect.Bottom": 638,
+            "FStyle": 0,
+            "FColor": 10710818,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": -1,
+            "AlignY": -1,
+            "AlignRect": false,
+            "Text": "\r\n\r\nQuestPlanet - это планета, на которой мы будем запускать квест. Она привязана к звезде QuestStar. И звезда, и \r\nпланета ОБЯЗАТЕЛЬНЫ для любого скрипта, даже если они не используются в самом скрипте.\r\n\r\nХар-ки планеты:\r\nПоле Race - раса, которой принадлежит планета.\r\nПоле Owner - владелец планеты. Если она принадлежит Коалиции, то нужно выбрать того же владельца, что и раса,\r\nKling - это доминаторы, а PirateClan - пиратский клан.\r\nПоле Economy - экономический тип планеты. Agriculture - аграрная, Industrial - индустриальная, Mixed - смешанная.\r\nПоле Goverment - полит. строй. Думаю, тут достаточно и базового знания английского.\r\nПоле Range - дальность планеты от звезды, мин. и макс. значения. Чем меньше значение, тем ближе к звезде.\r\nПоле Dialog - скриптовый диалог, который с тобой поведет правительство планеты.\r\n\r\nХар-ки звезды:\r\nПоле Constellation - ???\r\nПоле Priority - чем ниже приоритет, тем важнее поиск именно этой звезды. Если игрок начинает скрипт в ней, то\r\nприоритет должен быть самым низким.\r\nВАЖНО: у звезд должен быть разный приоритет!!!\r\nФлаг No kling - в системе не должно быть доминаторов и клановых пиратов.\r\nФлаг No come kling - систему не смогут атаковать доминаторы и клановые пираты.\r\nФлаг Subspace - не используется.",
+            "Color": 16777215,
+            "Font": "Segoe Print",
+            "FontSize": 8,
+            "fsBold": false,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 365,
+            "Rect.Top": 51,
+            "Rect.Right": 1597,
+            "Rect.Bottom": 174,
+            "FStyle": 0,
+            "FColor": 164,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": 0,
+            "AlignY": 0,
+            "AlignRect": false,
+            "Text": "Это основное поле скрипта.\r\nВ нем я подробно расписал значение каждого объекта.",
+            "Color": 16777215,
+            "Font": "Segoe Script",
+            "FontSize": 22,
+            "fsBold": true,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 1103,
+            "Rect.Top": 200,
+            "Rect.Right": 1591,
+            "Rect.Bottom": 647,
+            "FStyle": 0,
+            "FColor": 10710818,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": -1,
+            "AlignY": -1,
+            "AlignRect": false,
+            "Text": "\r\n\r\nА это корабль игрока.\r\nShip отвечает только за проверку того, находится ли корабль или станция\r\nв системе, к которой он привязан (в нашем случае QuestStar).\r\n\r\nКритерии поиска корабля:\r\nOwner - раса корабля.\r\nType - тип (в поле Ruins вписывается системное название\r\nнужной базы, напр. PB, RC, SB).\r\nCount - понятное дело, количество.\r\nSpeed - мин. и макс. скорость искомого корабля.\r\nWeapon - наличие оружие.\r\nCargoHook - захват какого ТУ необходим кораблю. Важно, когда ему надо подо-\r\nбрать предмет.\r\nEmpty space - минимальное количество пустого места у корабля.\r\nStatus - мин. и макс. значения пиратского, военного или торгового статуса \r\nкорабля. Используется для рейнджеров.\r\nRating - мин. и макс. значения очков в рейтинге рейнджеров, но до конца не уверен.\r\nScore - предположительно, мин. и макс. значения опыта корабля.\r\nStrange - мин. и макс. значения относительной силы корабля по отношению \r\nк лучшему рейнджеру.\r\nФлаг Player - является ли искомый корабль игроком.",
+            "Color": 16777215,
+            "Font": "Segoe Print",
+            "FontSize": 8,
+            "fsBold": false,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 1238,
+            "Rect.Top": 556,
+            "Rect.Right": 1241,
+            "Rect.Bottom": 563,
+            "FStyle": 0,
+            "FColor": 10710818,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": 0,
+            "AlignY": 0,
+            "AlignRect": false,
+            "Text": "",
+            "Color": 16777215,
+            "Font": "Arial",
+            "FontSize": 10,
+            "fsBold": false,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 1104,
+            "Rect.Top": 675,
+            "Rect.Right": 1594,
+            "Rect.Bottom": 893,
+            "FStyle": 0,
+            "FColor": 10710818,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": -1,
+            "AlignY": -1,
+            "AlignRect": false,
+            "Text": "\r\nЭто группа кораблей.\r\nВ нашем скрипте она не нужна, т.к. корабли там не участвуют, так что\r\nограничимся созданием группы, состоящей только из игрока.\r\nТут все, в принципе, также, как и с Ship, но вот Ship служит только для поиска,\r\nа к Group мы прикрепляем State и прочие действия. Кстати, на игрока стейты\r\nне влияют, но хоть один привязать ОБЯЗАТЕЛЬНО.\r\nВАЖНО: если в системе не найдется нужных кораблей, чтобы включить их в\r\nгруппу, то скрипт сам создаст их на привязанной планете, в нашем случае - \r\nQuestPlanet.\r\nВАЖНО: если в скрипте не будет ни одной непустой группы, то он завершится.",
+            "Color": 16777215,
+            "Font": "Segoe Print",
+            "FontSize": 8,
+            "fsBold": false,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": -187,
+            "Rect.Top": 135,
+            "Rect.Right": 17,
+            "Rect.Bottom": 183,
+            "FStyle": 0,
+            "FColor": 138,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": 0,
+            "AlignY": 0,
+            "AlignRect": false,
+            "Text": "INIT-код",
+            "Color": 16777215,
+            "Font": "Arial",
+            "FontSize": 14,
+            "fsBold": true,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 385,
+            "Rect.Top": 675,
+            "Rect.Right": 817,
+            "Rect.Bottom": 857,
+            "FStyle": 0,
+            "FColor": 10710818,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": -1,
+            "AlignY": -1,
+            "AlignRect": false,
+            "Text": "\r\nЭто операция. Функция GRun() запускает текущий скрипт.\r\nПеред ней можешь понатыкать if'ов, условных операторов, чтобы\r\nопределить, при каких условиях будет запускаться скрипт.\r\n\r\nВАЖНО: самому первому if в блоке запуска скрипта надо ставить \r\nтег Global, чтобы эти действия выполнялись вне зависимости от того, \r\nзапущен скрипт или нет. Сам посуди, бредово же делать запуск \r\nскрипта только при условии, что он уже запущен :)",
+            "Color": 16777215,
+            "Font": "Segoe Print",
+            "FontSize": 8,
+            "fsBold": false,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 1872,
+            "Rect.Top": 141,
+            "Rect.Right": 2126,
+            "Rect.Bottom": 204,
+            "FStyle": 0,
+            "FColor": 143,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": 0,
+            "AlignY": 0,
+            "AlignRect": false,
+            "Text": "ДИАЛОГ",
+            "Color": 16777215,
+            "Font": "Segoe Script",
+            "FontSize": 18,
+            "fsBold": true,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 1819,
+            "Rect.Top": 231,
+            "Rect.Right": 2219,
+            "Rect.Bottom": 651,
+            "FStyle": 0,
+            "FColor": 10710818,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": -1,
+            "AlignY": -1,
+            "AlignRect": false,
+            "Text": "Диалог обязательно выстраивать в последова-\r\nтельности \"текст-ответы\", как это показано\r\nздесь.\r\n\r\nВ поле Name у ответов так же можно вводить\r\nполезные теги:\r\nhangar - отправит игрока в ангар;\r\nshop - отправит игрока в магазин оборудования;\r\nplanet - отправляет игрока гулять по планете;\r\nexit - закроет окно диалога с кораблем;\r\nrestart - перезапустит диалог в правительстве планеты / базы.\r\nЕсть еще тег end, но он используется только в некоторых\r\nбазовых диалогах для завершения игры.\r\nВАЖНО: в конце диалога обязательна реплика с одним из этих\r\nтегов, иначе игра вылетит.\r\nGQuestStatus - глобальная переменная статуса текствого квеста.\r\n3 она равна, если квест провален.\r\n2 она равна, если квест пройден.\r\n1 она, предположительно, равна, если ТК еще запущен.\r\nТочно не имеет значения, если ТК проходится за 2-3 дня.\r\n0 она равна, если квест еще не запускался.",
+            "Color": 16777215,
+            "Font": "Segoe Print",
+            "FontSize": 8,
+            "fsBold": false,
+            "fsItalic": false,
+            "fsUnderline": false
+        },
+        {
+            "Type": "TGraphRectText",
+            "Rect.Left": 1856,
+            "Rect.Top": -36,
+            "Rect.Right": 2139,
+            "Rect.Bottom": 21,
+            "FStyle": 0,
+            "FColor": 182,
+            "BStyle": 0,
+            "BColor": 14474460,
+            "BSize": 1,
+            "BCoef": "0.300000011920929",
+            "AlignX": 0,
+            "AlignY": 0,
+            "AlignRect": false,
+            "Text": "ЗАПУСК ДИАЛОГА",
+            "Color": 16777215,
+            "Font": "Segoe Script",
+            "FontSize": 16,
+            "fsBold": true,
+            "fsItalic": false,
+            "fsUnderline": false
+        }
+    ],
+    "BlockPar.EC.Total.Strings": 0,
+    "BlockPar.EC": 
+    [
+      
+    ]
+}
