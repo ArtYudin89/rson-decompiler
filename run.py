@@ -3,18 +3,18 @@
 
 Examples:
   # RSON рядом с бинарником:
-  python run.py "Space Rangers HD A War Apart/Mods"
+  python run.py path/to/Mods
 
   # RSON в отдельный каталог (decompile_result/<ScriptName>/):
-  python run.py "Space Rangers HD A War Apart/Mods" --out-dir decompile_result
+  python run.py path/to/Mods --out-dir decompile_result
 
   # С контрольной сборкой через RScript.exe:
-  python run.py "Space Rangers HD A War Apart/Mods" --out-dir decompile_result --check
+  python run.py path/to/Mods --out-dir decompile_result --check
 
   # Один файл:
-  python run.py path/to/Mod_ShuDomiks.scr --out-dir decompile_result --check
+  python run.py path/to/Mod_Example.scr --out-dir decompile_result --check
 """
-import argparse, json, re, shutil, struct, subprocess, sys, os, tempfile, logging
+import argparse, json, re, shutil, struct, subprocess, sys, os, tempfile, time, logging
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -138,7 +138,7 @@ def _run_rscript(rscript, rson_path, out_scr, lang_txt=None, timeout=30):
             [str(rscript), '--cli', '-b', '-f', str(rson_path), str(out_scr), str(tmp_dialogs)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        deadline = __import__('time').time() + timeout
+        deadline = time.time() + timeout
         dialogs = []
         seen = set()
         while True:
@@ -152,12 +152,12 @@ def _run_rscript(rscript, rson_path, out_scr, lang_txt=None, timeout=30):
                 _dlgwatch._press_ok(hwnd)
             if rc is not None:
                 break
-            if __import__('time').time() > deadline:
+            if time.time() > deadline:
                 proc.kill()
                 proc.wait(5)
                 rc = -1
                 break
-            __import__('time').sleep(0.2)
+            time.sleep(0.2)
         if dialogs:
             err = '; '.join(dialogs)[:300]
     except Exception as e:
@@ -185,19 +185,6 @@ def _run_rscript(rscript, rson_path, out_scr, lang_txt=None, timeout=30):
 # ---------------------------------------------------------------------------
 # Binary post-processor: restore original dialog slot numbers and variable names
 # ---------------------------------------------------------------------------
-
-def _find_call_end(s, start=0):
-    """Return char index past the closing paren of a call starting at `start`."""
-    dep, i = 0, start
-    while i < len(s):
-        if s[i] == '(': dep += 1
-        elif s[i] == ')':
-            dep -= 1
-            if dep == 0:
-                return i + 1
-        i += 1
-    return -1
-
 
 def _find_ref_spans(data, script_name):
     """Find CT-reference spans in an SCR binary, in occurrence order.

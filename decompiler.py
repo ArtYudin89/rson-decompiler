@@ -151,7 +151,7 @@ def _places_parse_ok(d, p, count):
     """True if [count] place records (nt_fmt h1>=200 layout) parse cleanly at p:
     name(nt) + sref(nt) + type(dw) + type-specific fields, with every type<=10.
     Used to confirm the dword landed on after skipping pad zeros really is a
-    places_count (RevTerrorist) and not an item_count we over-skipped to (Yamato)."""
+    places_count and not an item_count we over-skipped to."""
     if count < 1 or count > 2000:
         return False
     q = p
@@ -239,9 +239,9 @@ def escape_code_line(s):
     """Escape a raw code line for RScript: its parser maps double-backslash
     to one backslash and backslash-quote to a quote, so a binary
     backslash-quote must be written as three backslashes plus quote
-    (author rsons: ABMap.Spider + 3 backslashes + quote + s_Lair).
-    This holds for both single (') and double (") quotes — e.g. ShuNukes
-    InitCode `\\"nuke_shafts\\"` must round-trip through three backslashes."""
+    (verified against author-made rsons). This holds for both single (')
+    and double (") quotes: a binary `\\"name\\"` must round-trip through
+    three backslashes."""
     BS = chr(92); Q = chr(39); DQ = chr(34)
     s = s.replace(BS, BS + BS)
     s = s.replace(BS + BS + Q, BS + BS + BS + Q)
@@ -260,11 +260,6 @@ def resolve_ct_in_lines(lines, lang):
         return m.group(0)
     return [re.sub(r'CT\s*\(["\']([^"\']+)["\']\)', ct_sub, line) for line in lines]
 
-
-def split_statements(code):
-    """Split a line containing multiple ';'-separated statements."""
-    parts = re.split(r';\s*', code.replace('\r\n','\n').replace('\r','\n'))
-    return [p.strip() for p in parts if p.strip()]
 
 def process_msg_code(code):
     """Extract CT ref, verbatim DText code, and Turn lines from dialog message code."""
@@ -302,20 +297,6 @@ def process_msg_code(code):
     # Re-join and normalize indent via code_lines
     turn_lines = code_lines('\n'.join(raw_turn)) if raw_turn else []
     return ct_ref, turn_lines, orig_dtext
-    """Extract name, CT ref and Turn lines from dialog answer code."""
-    ct_ref, ans_name, turn_lines = '', '', []
-    raw_lines = code.replace('\r\n','\n').replace('\r','\n').split('\n')
-    for line in raw_lines:
-        stmts = split_statements(line)
-        for st in stmts:
-            m = re.match(r"DAnswer\s*\(\s*'([^~']*?)~'\+CT\([\"']([^\"']+)[\"']\)\s*\)", st)
-            if m:
-                ans_name = m.group(1)
-                ct_ref = m.group(2)
-            elif st:
-                turn_lines.append(st + ';')
-    while turn_lines and turn_lines[-1]=='': turn_lines.pop()
-    return ans_name, ct_ref, turn_lines
 
 def parse(data, lang=None):
     if lang is None: lang = {}
@@ -330,14 +311,14 @@ def parse(data, lang=None):
 
     # Format detection:
     # h2 != 0 → kavscr-style: script name as first var, h1=var_section_offset, h2=init_value
-    # h2 == 0 → global_code style (DefendOrder h0=6, Excalibur h0=8 — both same layout)
+    # h2 == 0 → global_code style (same layout for h0=6 and h0=8)
     # h0 == 8 also means new group/ship struct (fewer pads, no extra_byte on star, etc.)
     # is_nt_fmt: h0==7 always; h0==8 only when h1<100 (raw global code, not wstring length)
     is_kavscr = (h2 != 0)
     # is_preglob: h2>=3 means "N pre-global vars in header block", NOT a kavscr init value.
     # h2=1: classic kavscr (script object init value)
-    # h2=2: kavscr with pre-global array (EvoDreadnought) — treated as kavscr, not preglob
-    # h2>=3: pre-global vars only (ExpAcryn etc.) — uses non-kavscr group/state/item structure
+    # h2=2: kavscr with pre-global array — treated as kavscr, not preglob
+    # h2>=3: pre-global vars only — uses non-kavscr group/state/item structure
     is_preglob = (h2 >= 3)
     is_new_fmt = (h0 == 8)   # controls struct layout differences (pads, star extra byte, etc.)
     # is_nt_fmt: all h0!=8, all kavscr (h2!=0), all h0==8 non-kavscr.
@@ -361,9 +342,8 @@ def parse(data, lang=None):
             # Typed array: count + count slots of [2-byte index + 1-byte elem type];
             # then, for each element whose type != 0, its value follows (an
             # initialized array). Uninitialized arrays have all slot types 0
-            # (e.g. EvoArmada GDreadnoughtArray, ShuWarriors uninit arrays) and
-            # consume only count*3 — identical to the old `p += v*3`. Initialized
-            # arrays (e.g. ShuWarriors new_operation_arr=[0]) carry trailing values.
+            # and consume only count*3 — identical to the old `p += v*3`.
+            # Initialized arrays (e.g. arr=[0]) carry trailing values.
             v, p = dw(d, p)
             _elem_types = []
             for _ in range(v):
@@ -379,7 +359,7 @@ def parse(data, lang=None):
         return (n, t, v), p
 
     if is_kavscr and is_nt_fmt:
-        # kavscr + nt_fmt (mod_spacejunk h0=7):
+        # kavscr + nt_fmt (h0=7):
         # Header block 12..h1: entries with nt names; last entry (t=4) is global code
         var_section_offset = h1
         var_decls = []
@@ -396,13 +376,13 @@ def parse(data, lang=None):
                 gc_val, p3 = read_wstr_nt(data, p2)
                 if p3 >= var_section_offset:
                     # type=4 entry whose value ends at the var section = the
-                    # global code slot (mod_spacejunk format).
+                    # global code slot.
                     global_code = gc_val
                     pos = p3
                     break
                 # Otherwise it is a normal Str variable; keep it and continue
                 # scanning — the real global code is the tail wstring before
-                # var_section_offset (e.g. Mod_EvoTranc's '  GRun();').
+                # var_section_offset (an inline code tail).
                 var_decls.append((n, t, gc_val))
                 pos = p3
                 continue
@@ -439,7 +419,7 @@ def parse(data, lang=None):
             else:
                 break
     elif is_kavscr:
-        # kavscr + rw (kavscr1, kavscr2)
+        # kavscr + rw
         script_name, pos = read_wstr(data, pos)
         var_type = data[pos]; pos += 1
         var_init, pos = dw(data, pos)
@@ -472,7 +452,7 @@ def parse(data, lang=None):
             _objreg_vals[nm_peek] = _rv
             if _is_valid_id(nm_peek): var_decls.append((nm_peek, t_peek, 0))
     elif is_nt_fmt:
-        # nt_fmt, not kavscr (ZelPirates h0=7, Mod_RefQuest h0=8+h1<100)
+        # nt_fmt, not kavscr (h0=7; also h0=8 with h1<100)
         raw_gc = data[12:h1]
         global_code = raw_gc.decode('utf-16-le','replace').rstrip('\x00')
         pos = h1
@@ -491,7 +471,7 @@ def parse(data, lang=None):
             _objreg_vals[nm_peek] = _rv
             if _is_valid_id(nm_peek): var_decls.append((nm_peek, t_peek, 0))
     else:
-        # rw format (DefendOrder h0=6, Excalibur h0=8)
+        # rw format (h0=6 / h0=8)
         global_code, pos = read_wstr(data, pos)
         var_count, pos = dw(data, pos)
         var_decls = []
@@ -673,8 +653,8 @@ def parse(data, lang=None):
             # h0=8 kavscr (h2=1) or h0=8 non-kavscr h1>=100:
             # 4 extra wstrings after the first one: smn2, smx2, x1, Ruins.
             # RScript writes the RSON Ruins value into the LAST string slot
-            # (verified empirically on Mod_RevTerrorist), so the first string
-            # read above is an unknown pad, and the real Ruins comes last.
+            # (verified empirically), so the first string read above is an
+            # unknown pad, and the real Ruins comes last.
             smn2_str, pos = rs(data, pos)
             smx2_str, pos = rs(data, pos)
             _, pos = rs(data, pos)
@@ -688,18 +668,18 @@ def parse(data, lang=None):
             # and places_count=0 is a legitimate leading zero, not a pad.
             if not is_kavscr and star_count <= 1 and h1 >= 200:
                 # Skip pad zeros before places_count. Greedy skip lands on the first
-                # non-zero dword V. Normally V is places_count (e.g. RevTerrorist
-                # has pad zeros then places_count=5). But if there were NO pads and
-                # places_count is legitimately 0 (e.g. Yamato), the greedy loop eats
-                # that 0 too and lands on item_count. Detect this: if V does NOT
+                # non-zero dword V. Normally V is places_count (pad zeros, then
+                # places_count>0). But if there were NO pads and places_count is
+                # legitimately 0, the greedy loop eats that 0 too and lands on
+                # item_count. Detect this: if V does NOT
                 # parse as places but [V][...] parses as items, back up 4 so the
                 # eaten zero is read as places_count=0.
                 while pos + 4 <= len(data) and struct.unpack_from('<I', data, pos)[0] == 0:
                     pos += 4
                 # Backup only for files that read places_count via the new_fmt
-                # h1 in [200,350) single-star branch (e.g. Yamato). For h1>=350
-                # (e.g. RevTerrorist) there is no places_count field — item_count
-                # follows directly — so the greedy landing is already correct.
+                # h1 in [200,350) single-star branch. For h1>=350 there is no
+                # places_count field — item_count follows directly — so the
+                # greedy landing is already correct.
                 if is_new_fmt and h1 < 350:
                     _V = struct.unpack_from('<I', data, pos)[0] if pos + 4 <= len(data) else 0
                     if (_V > 0 and not _places_parse_ok(data, pos + 4, _V)
@@ -823,9 +803,9 @@ def parse(data, lang=None):
                     return None
                 for _ in range(star_count - 1):
                     star, pos = read_one_star(data, pos, skip_prefix=False)
-                    # Some secondary stars carry 13 extra bytes of per-star fields after
-                    # the base struct (e.g. ShuPirates_BlackHole) before their own
-                    # planet_count; others (e.g. RevDiplomat) have planet_count directly.
+                    # Some secondary stars carry 13 extra bytes of per-star fields
+                    # after the base struct before their own planet_count; others
+                    # have planet_count directly.
                     # Peek both: prefer the interpretation giving a non-zero planet count
                     # with a valid planet name; fall back to no-skip for a 0-planet star.
                     _ep0 = _valid_ep(pos)
@@ -833,7 +813,7 @@ def parse(data, lang=None):
                     if _ep0:
                         pass                       # planet_count>=1 here, no extra bytes
                     elif _ep13:
-                        pos += 13                  # extras present (ShuPirates)
+                        pos += 13                  # extras present
                     elif _ep0 == 0:
                         pass                       # 0-planet star, no extras
                     else:
@@ -1208,20 +1188,20 @@ def parse(data, lang=None):
                           '+Place':iplace})
     elif is_nt_fmt:
         # h0==7/6: places_count + place structs (name_nt + ref_nt + 16b extra), then items.
-        # h0==8, h2==0, h1>=100, non-kavscr (Rev* mods): rs-based place struct, no items section.
+        # h0==8, h2==0, h1>=100, non-kavscr: rs-based place struct, no items section.
         # h0==8, kavscr, non-preglob, star_count==1: kavscr rw places (same format as rw branch).
         # h0==8, non-kavscr, h1>=500: no places section at all (groups follow directly).
         # Place struct: name(rs)+sref(rs)+type(dw)+r1(rs)+r2(rs)+3dw+r3(rs)[+r4(rs) if r3!='']
         places = []
         items = []
         if not is_kavscr and h1 >= 500 and is_new_fmt:
-            # h1>=500, h0==8 (e.g. Cat_Drugs h1=698): no places, no items; groups follow directly.
-            # h0==7 files with h1>=500 (e.g. ShuMiniBoss h1=596) still have places_count+item_count
+            # h1>=500, h0==8 (e.g. h1=698): no places, no items; groups follow directly.
+            # h0==7 files with h1>=500 (e.g. h1=596) still have places_count+item_count
             # in the binary (both =0), so they fall through to the h1>=200 branch below.
             pass
         elif not is_kavscr and h1 >= 350 and is_new_fmt:
-            # h1 in [350,500), h0==8 (e.g. RevTerrorist h1=424): no places; items follow directly.
-            # h0==7 files with h1>=350 (e.g. ShuMiniBoss h1=596) fall through to h1>=200 branch.
+            # h1 in [350,500), h0==8 (e.g. h1=424): no places; items follow directly.
+            # h0==7 files with h1>=350 (e.g. h1=596) fall through to h1>=200 branch.
             item_count, pos = dw(data, pos)
             _guard(item_count, data, 'item_count(h1ge350)')
             for _ in range(item_count):
@@ -1234,7 +1214,7 @@ def parse(data, lang=None):
                               'Size':isz,'Level':ilvl,'Radius':irad,'Owner':iown,
                               'Useless':iusl,'+Place':iplace})
         elif not is_kavscr and not is_new_fmt and h1 >= 200:
-            # h0==7 non-kavscr h1 in [200,350) (e.g. ShuQuad h1=288):
+            # h0==7 non-kavscr h1 in [200,350) (e.g. h1=288):
             # compact rs-based place struct: name(rs)+sref(rs)+type(dw)+fields, then items.
             places_count, pos = dw(data, pos)
             _guard(places_count, data, 'places_count(h0_7_h1ge200)')
@@ -1267,7 +1247,7 @@ def parse(data, lang=None):
             # Group count follows directly after ships section.
             pass
         elif is_kavscr and star_count > 1 and is_new_fmt:
-            # kavscr is_nt_fmt multi-star (e.g. MS_Begin h2=2): inline star2 format,
+            # kavscr is_nt_fmt multi-star (h2=2): inline star2 format,
             # same as the kavscr rw multi-star block in the is_new_fmt not is_nt_fmt branch.
             if h1 >= 1000:
                 for _ in range(star_count - 1):
@@ -1462,9 +1442,9 @@ def parse(data, lang=None):
                                       'Useless':iusl,'+Place':iplace})
                 else:
                     # Single-star: two sub-formats based on h1 value.
-                    # h1 < 200 (e.g. RevColonization h1=156): Rev* multi-field format
+                    # h1 < 200 (e.g. h1=156): multi-field format
                     #   name(rs)+sref(rs)+type(dw)+r1(rs)+r2(rs)+3dw+r3(rs)[+r4 if r3!='']
-                    # h1 >= 200 (e.g. RevScientist h1=226): compact ref format
+                    # h1 >= 200 (e.g. h1=226): compact ref format
                     #   name(rs)+sref(rs)+type(dw)
                     #   type==0: 3dw; type==1: ref(rs)+dw; type==4: ref(rs)+dw
                     #   type==5 (and others): ref(rs)+f32+dw+dw
@@ -1497,8 +1477,8 @@ def parse(data, lang=None):
                             if r3:                            # conditional extra rs when r3 non-empty
                                 _, pos = rs(data, pos)
                             places.append({'name':pnm,'star_ref':sref})
-                        # Items follow: [item_count][items] (e.g. RevColonization
-                        # places_count=0, item_count=2 satellite+itemToDrop).
+                        # Items follow: [item_count][items] (a file may have
+                        # places_count=0 with a non-empty items section).
                         item_count, pos = dw(data, pos)
                         _guard(item_count, data, 'item_count(h1lt200)')
                         items = []
@@ -1514,7 +1494,7 @@ def parse(data, lang=None):
                                           '+Place':iplace})
                     else:
                         # h1>=200: compact format with ref per type, then item_count+items.
-                        # Some files (e.g. FW h1=206) have NO places section at all —
+                        # Some files (e.g. h1=206) have NO places section at all —
                         # the count here is the GROUP count and the record's 2nd string
                         # is a planet name (groups reference planets, places reference
                         # stars). Detect and back off so groups parsing takes over.
@@ -1566,7 +1546,7 @@ def parse(data, lang=None):
                                           'Size':isz,'Level':ilvl,'Radius':irad,'Owner':iown,
                                           'Useless':iusl,'+Place':iplace})
             elif is_kavscr and not is_new_fmt and star_count > 1:
-                # h0==7 kavscr multi-star (e.g. RevMerchants h1=417): places format unknown.
+                # h0==7 kavscr multi-star (e.g. h1=417): places format unknown.
                 # Skip places section entirely — groups follow directly after ships.
                 pass
             else:
@@ -1599,7 +1579,7 @@ def parse(data, lang=None):
                                   'Level':ilvl,'Radius':irad,'Owner':iown,'Useless':iusl,
                                   '+Place':iplace})
     else:
-        # Old rw format (DefendOrder): places_count (usually 0) then items
+        # Old rw format: places_count (usually 0) then items
         places_count, pos = dw(data, pos)
         places = []
         item_count, pos = dw(data, pos)
@@ -1702,7 +1682,7 @@ def parse(data, lang=None):
         ap, _gvals, pos = _read_group_tail(_gtail_save, True)
         _compact_v7_group = False
         if not is_new_fmt and any(v > 5000000 for v in _gvals):
-            # Some h0=7 files (e.g. ShuMiniBoss_PiratesHunt) have NO extra
+            # Some h0=7 files have NO extra
             # dwords around AddPlayer — the with-extras read lands mid-text
             # and produces garbage statuses. Retry the compact layout.
             ap2, _gvals2, pos2 = _read_group_tail(_gtail_save, False)
@@ -1833,7 +1813,7 @@ def parse(data, lang=None):
             _, pos = dw(data, pos)   # pad2
             smn2_str = smn2_s if smn2_s else '0'
             smx2_str = smx2_s if smx2_s else '0'
-        # preglob-new sub-variant (e.g. Mod_ShuDomiks h2=4): the group tail
+        # preglob-new sub-variant (h2=4): the group tail
         # has NO 8-byte smn2/smx2 dwords — detect by peeking the next group
         # name and back off when the -8 position yields a valid identifier.
         if is_preglob and is_new_fmt and _gi < group_count - 1:
@@ -1843,7 +1823,7 @@ def parse(data, lang=None):
                 return (bool(s) and s[:1].isalpha()
                         and all(c.isalnum() or c == '_' for c in s))
             # Truncated-name signature: the -8 read is a longer valid id that
-            # ends with the at-pos read ('KellerClone' vs 'erClone').
+            # ends with the at-pos read (e.g. 'GuardBase' vs 'dBase').
             if (_vid_s(_nm_back) and len(_nm_back) == len(_nm_at) + 4
                     and _nm_back.endswith(_nm_at)):
                 pos -= 8
@@ -1860,7 +1840,7 @@ def parse(data, lang=None):
                        'Ruins':rns,'+Planet':pln,'+State':sti})
     # Pre-state code chunks (Init, Turn, DialogBegin in old format)
     logger.debug('    [cp] groups done (%d), pos=%d', len(groups), pos)
-    # Some scripts (Mod_SR1Gaals&Pirates h2=1, Mod_ShuMiniBoss h2=0) store
+    # Some scripts (seen with h2=1 and h2=0) store
     # difficulty/AI records between the groups and the code chunks: a 7-dword
     # record (6 small ints + float 1000.0) followed by a 6-dword record (5 small
     # ints + float 1000.0). Detect via the trailing 1000.0 (0x447A0000) marker
@@ -1925,7 +1905,7 @@ def parse(data, lang=None):
             # Only expose slots 2-4 (Init, Turn, DialogBegin) for op emission
             dialog_begin_chunks = raw_chunks[2:]
     elif is_nt_fmt and not is_new_fmt and not is_kavscr and h0 == 6:
-        # h0==6 non-kavscr nt_fmt (e.g. Mod_SR1RedSkullPart2):
+        # h0==6 non-kavscr nt_fmt:
         # 5 dword header, then sentinel-based wstring chunks
         for _ in range(5):
             _, pos = dw(data, pos)
@@ -2121,9 +2101,9 @@ def parse(data, lang=None):
             elif _b0 == 0 and _b1 != 0:
                 # [ta=0] then OnActCode/OnTalk strings directly — no TakeItem
                 # slot in this variant. String order is [OnActCode][OnTalk]
-                # (Mod_AutoBot: '[t_OnItemPickUp,...]...code' first, '' second;
-                # author rson has it in OnActCode). MS_Keller is symmetric
-                # ('dKeller' both) so the swap is safe there.
+                # (verified on a file where the first string is an
+                # '[event,...]...' code block that the author rson keeps in
+                # OnActCode; symmetric files make the swap a no-op).
                 ta,  pos = b1(data, pos)
                 ti_s = ''
             else:
@@ -2135,7 +2115,7 @@ def parse(data, lang=None):
             # OnTalk is a dialog NAME; OnActCode may be CODE (with an
             # [event,...] header, ';' or newlines). When the first string
             # looks like code and the second does not, the binary order is
-            # [OnActCode][OnTalk] (e.g. Mod_AutoBot) — swap.
+            # [OnActCode][OnTalk] — swap.
             def _looks_oa(s):
                 return bool(s) and (s.startswith('[') or ';' in s or chr(13) in s or chr(10) in s)
             if _looks_oa(ot) and not _looks_oa(oa):
@@ -2199,7 +2179,7 @@ def parse(data, lang=None):
             chunk, pos = rs(data, pos)
             extra_state_codes.append(chunk)
     elif is_kavscr and not is_nt_fmt and h1 >= 4000:
-        # rw kavscr state struct (Mod_ExpBlackMarket_1 and similar):
+        # rw kavscr state struct (h1>=4000):
         # nm + mv(dw) + mo(rs) + ac(dw) + [ac×rs] + ti(dw) + ta(b1)
         # + ot(rw_len_prefixed) + oa(rw_len_prefixed)
         # + code(rs_nt) — only present when mv!=0 OR oa_len!=0
@@ -2430,7 +2410,7 @@ def parse(data, lang=None):
     # Operations: Global, pre-state code chunks, state/dialog/msg/ans turn codes
     # RScript rejects an empty Global op (syntax error 'sme=2 line=!;') and
     # crashes with EListError when the Global op is absent — emit a lone
-    # comment for scripts whose global slot is empty (e.g. MS_Keller); the
+    # comment for scripts whose global slot is empty; the
     # binary patcher removes the extra '  //' bytes afterwards.
     _gc_lines = code_lines(global_code)
     if not _gc_lines:
@@ -2483,29 +2463,32 @@ def parse(data, lang=None):
                     rows_used.append(y)
         return rows_used
 
-    # Variables: horizontal flow, row height=25
-    MAX_X = 1800
+    # Variables: horizontal flow, row height=25 (editor decompile: min cell 60)
+    MAX_X = 1600
     base = len(variables)
     vx, vy = 0, 0
     for v in variables:
         v['Pos.x'] = vx
         v['Pos.y'] = vy
-        vx += cell_w(v['Name'])
+        vx += cell_w(v['Name'], min_w=60)
         if vx >= MAX_X:
             vx = 0; vy += 25
     var_bottom = vy + 25 if variables else 0
 
-    # Game objects stacked below variables
-    Y_SHIP   = var_bottom + 45
-    Y_STAR   = var_bottom + 90
-    Y_PLANET = var_bottom + 135
-    Y_ITEM   = var_bottom + 180
-    Y_GROUP  = var_bottom + 225
-    Y_STATE  = var_bottom + 250
+    # Vertical column below the variables: Ship, Star, Places-row, Planet, Item
+    # share one sequence with 45px spacing; an empty section takes no slot.
+    # Mirrors the editor's own SCR-decompile (verified against its output).
+    _cy = var_bottom + 20
+    Y_SHIP  = _cy; _cy += 45 if ships   else 0
+    Y_STAR  = _cy; _cy += 45 if stars   else 0
+    Y_PLACE = _cy; _cy += 45 if places  else 0
+    Y_PLANET= _cy; _cy += 45 if planets else 0
+    Y_ITEM  = _cy; _cy += 45 if items   else 0
+    Y_GROUP = _cy
 
     # RScript requires unique star priorities ('Star priority. First unique').
     # When the star records carry duplicates, the true priorities live in the
-    # obj-name var registrations (e.g. MS_Keller: StarPlayer reg dword = 1).
+    # obj-name var registrations (a star-name var registered with its priority).
     if len(stars) > 1:
         _pris = [s.get('Priority', 0) for s in stars]
         if len(set(_pris)) < len(_pris):
@@ -2526,7 +2509,6 @@ def parse(data, lang=None):
     for i, p in enumerate(planets):
         p.update({'Type':'TPlanet','Pos.x':i*90,'Pos.y':Y_PLANET,'Parent':-1,'#':base+i})
     base += len(planets)
-    Y_PLACE = Y_ITEM + 45
     for i, pl in enumerate(places):
         # Keep the original star ref verbatim (may be empty) — defaulting to
         # stars[0] breaks round-trip for places without a star link.
@@ -2553,8 +2535,21 @@ def parse(data, lang=None):
     for i, it in enumerate(items):
         it.update({'Type':'TItem','Pos.x':i*90,'Pos.y':Y_ITEM,'Parent':-1,'#':base+i})
     base += len(items)
+
+    # Groups: compact grid, wrap by width; remember each group's position so its
+    # +State target can be parked directly underneath (as the editor lays it out).
+    GRID_MAX_X = 450
+    GROUP_ROW = 60
+    _gx = _gy = 0
+    _group_pos = []
     for i, g in enumerate(groups):
-        g.update({'Type':'TGroup','Pos.x':i*90,'Pos.y':Y_GROUP,'Parent':-1,'#':base+i})
+        _w = cell_w(g.get('Name', ''))
+        if _gx > 0 and _gx + _w > GRID_MAX_X:
+            _gx = 0; _gy += GROUP_ROW
+        g.update({'Type':'TGroup','Pos.x':_gx,'Pos.y':Y_GROUP + _gy,'Parent':-1,'#':base+i})
+        _group_pos.append((_gx, Y_GROUP + _gy))
+        _gx += _w
+    _groups_bottom = Y_GROUP + _gy + GROUP_ROW
     base += len(groups)
 
     # Pre-state ops get IDs before state
@@ -2562,8 +2557,30 @@ def parse(data, lang=None):
     n_pre_ops = 1 + sum(1 for c in dialog_begin_chunks if c)  # Global + non-empty pre-state chunks
     base += n_pre_ops
 
+    # State index -> owning group position (group['+State'] is an index into states).
+    _state_owner = {}
+    for _gi, g in enumerate(groups):
+        _si = g.get('+State', -1)
+        if isinstance(_si, int) and 0 <= _si < len(states) and _si not in _state_owner:
+            _state_owner[_si] = _group_pos[_gi]
+    # Owned states sit under their group (x, y+25); orphans flow in rows below the grid.
+    Y_STATE_ORPHAN = _groups_bottom + 25
+    _ox = _oy = 0
+    _state_bottom = Y_STATE_ORPHAN
     for i, s in enumerate(states):
-        s.update({'Type':'TState','Pos.x':i*90,'Pos.y':Y_STATE,'Parent':-1,'#':base+i})
+        if i in _state_owner:
+            _gx0, _gy0 = _state_owner[i]
+            sx, sy = _gx0, _gy0 + 25
+        else:
+            _w = cell_w(s.get('Name', ''))
+            if _ox > 0 and _ox + _w > GRID_MAX_X:
+                _ox = 0; _oy += 25
+            sx, sy = _ox, Y_STATE_ORPHAN + _oy
+            _ox += _w
+        s.update({'Type':'TState','Pos.x':sx,'Pos.y':sy,'Parent':-1,'#':base+i})
+        if sy > _state_bottom:
+            _state_bottom = sy
+    Y_STATE = _state_bottom
     base += len(states)
 
     # Fix Code.Type for pre-state ops. Only for chunks whose type was guessed
@@ -2580,20 +2597,21 @@ def parse(data, lang=None):
             if op['Code.Type'] == 'DialogBegin':
                 op['Code.Type'] = 'Init'
 
-    # Layout dialogs, msgs, answers horizontally with wrapping
-    Y_DLG = Y_STATE + 100
+    # Layout dialogs, msgs, answers horizontally with wrapping; empty sections
+    # don't consume vertical space.
+    Y_DLG = Y_STATE + (100 if dialogs else 45)
 
     dlg_rows = layout_horizontal(dialogs, Y_DLG, lambda d: cell_w(d['Name'], min_w=120))
     dlg_bottom = max(dlg_rows) + 25 if dialogs else Y_DLG
-    Y_MSG = dlg_bottom + 45
+    Y_MSG = dlg_bottom + (45 if msgs else 0)
 
     msg_rows = layout_horizontal(msgs, Y_MSG, lambda m: 150)
     msg_bottom = max(msg_rows) + 25 if msgs else Y_MSG
-    Y_ANS = msg_bottom + 45
+    Y_ANS = msg_bottom + (45 if answers else 0)
 
     ans_rows = layout_horizontal(answers, Y_ANS, lambda a: 120)
     ans_bottom = max(ans_rows) + 25 if answers else Y_ANS
-    Y_OPS_PRE = ans_bottom + 45
+    Y_OPS_PRE = ans_bottom + (45 if (dialogs or msgs or answers) else 0)
 
     # Assign # to dialogs
     for i, d in enumerate(dialogs):
@@ -2630,7 +2648,7 @@ def parse(data, lang=None):
 
     pre_type_x = {'Global': 0, 'Init': 60, 'Turn': 120, 'DialogBegin': 180}
     pre_x_counter = 0
-    dlg_ti = msg_ti = ans_ti = 0
+    dlg_ti = msg_ti = ans_ti = state_ti = 0
 
     for i, op in enumerate(ops):
         typ = op.pop('_pos_y_type', '')
@@ -2647,6 +2665,20 @@ def parse(data, lang=None):
             pre_x_counter += 1
             op['Pos.x'] = px
             op['Pos.y'] = Y_OPS_PRE
+        elif typ == 'state':
+            # Turn-код состояния — вплотную слева от своего TState (как в
+            # интерактивном декомпиле редактора: x-20, тот же y). Итерация
+            # зеркалит порядок создания опов: по states с непустым _code.
+            while state_ti < len(states) and not states[state_ti].get('_code', ''):
+                state_ti += 1
+            if state_ti < len(states):
+                par = states[state_ti]
+                op['Pos.x'] = par['Pos.x'] - 20
+                op['Pos.y'] = par['Pos.y']
+                state_ti += 1
+            else:
+                # extra_state_codes без владельца-состояния
+                op['Pos.x'] = 0; op['Pos.y'] = Y_OPS_PRE
         elif typ == 'dlg':
             if dlg_ti < len(dialogs):
                 par = dialogs[dlg_ti]
@@ -2798,8 +2830,8 @@ def parse(data, lang=None):
             links.append({'Type':'TGraphLink','Begin':planet['#'],'End':star_id,'Nom':0,'Arrow':True})
     for item in items:
         # Item links to its Place. The +Place ref may name a Place, Group,
-        # Planet, Ship or Star (e.g. RevElection items Projector/Defibl sit on
-        # planet PlanetS) — resolve through all of them, not just Places/Groups.
+        # Planet, Ship or Star (items may sit directly on a planet) — resolve
+        # through all of them, not just Places/Groups.
         _ipl = item.get('+Place', '')
         place_id = None
         for _isec in ('Places', 'Groups', 'Planets', 'Ships', 'Stars'):
@@ -2855,7 +2887,7 @@ def parse(data, lang=None):
                         break
                 _plc[_ofield] = _oid if _oid is not None else -1
 
-    # Planet Dialog may be a wstring name (e.g. MS_Begin) — resolve to the
+    # Planet Dialog may be a wstring name — resolve to the
     # dialog's global # (RScript EInvalidCast on string here).
     for _pl in planets:
         _pdlg = _pl.get('Dialog')
@@ -2881,6 +2913,25 @@ def parse(data, lang=None):
         star.pop('_dist_min', None)
         star.pop('_dist_max', None)
         star.pop('_hole', None)
+
+    # Канон редактора: порядок ключей узла Type, Name, Pos.x, Pos.y, Parent, #,
+    # затем полезная нагрузка; пустой Attack.Items редактор не пишет вовсе
+    # (сверено с авторскими rson и выводом интерактивного декомпила RScript).
+    _HEAD = ('Type', 'Name', 'Pos.x', 'Pos.y', 'Parent', '#')
+    for _kind, _kind_list in vo.items():
+        if not isinstance(_kind_list, list):
+            continue
+        # У звёзд Constellation идёт сразу после служебной шапки.
+        _head = _HEAD + ('Constellation',) if _kind == 'Stars' else _HEAD
+        for _i, _n in enumerate(_kind_list):
+            if not isinstance(_n, dict):
+                continue
+            if 'Attack.Items' in _n and not _n['Attack.Items']:
+                _n.pop('Attack.Items')
+            _kind_list[_i] = {
+                **{k: _n[k] for k in _head if k in _n},
+                **{k: v for k, v in _n.items() if k not in _head},
+            }
     return vo, links
 
 
@@ -2926,8 +2977,8 @@ def decompile(scr_path, out_path=None, lang_path=None):
         out_path = str(Path(scr_path).with_suffix('.rson'))
     script_name = Path(scr_path).stem
     # The binary's internal script name (used in CT refs like 'Script.<name>.N')
-    # may differ from the filename (e.g. PC_fem_rangers_.scr contains
-    # 'Script.PC_fem_rangers.'). RScript names new CT keys after ScriptName,
+    # may differ from the filename (e.g. Mod_Foo_.scr may contain
+    # 'Script.Mod_Foo.'). RScript names new CT keys after ScriptName,
     # so use the internal one for round-trip fidelity.
     try:
         raw = Path(scr_path).read_bytes()
@@ -2940,6 +2991,25 @@ def decompile(scr_path, out_path=None, lang_path=None):
                 script_name = internal
     except Exception:
         pass
+    # Полная шапка редактора (как в авторских сохранениях). ExportLang* и
+    # LangDat*/MainDat*/CacheDat* оставляем пустыми/False: непустой LangDatOut
+    # с ExportLangDat=true заставил бы редактор ПЕРЕЗАПИСАТЬ Lang.dat мода
+    # при компиляции.
+    # Информационная плашка — как её ставит интерактивный SCR-декомпил самого
+    # редактора (текст правил преобразования тот же).
+    banner = {
+        'Type': 'TGraphRectText',
+        'Rect.Left': 632, 'Rect.Top': -268, 'Rect.Right': 1339, 'Rect.Bottom': -80,
+        'FStyle': 0, 'FColor': 10710818, 'BStyle': 0, 'BColor': 14474460,
+        'BSize': 1, 'BCoef': '0.300000011920929',
+        'AlignX': 0, 'AlignY': 0, 'AlignRect': False,
+        'Text': (f'SCR Decompiling {script_name}\r\n\r\n'
+                 'ChangeState(...) -> Link to StateName\r\n'
+                 'DChange(...) -> Link to DMsg.Num\r\n'
+                 'DAdd(...) -> Link to AMsg.Num'),
+        'Color': 16777215, 'Font': 'Segoe UI', 'FontSize': 10,
+        'fsBold': True, 'fsItalic': False, 'fsUnderline': False,
+    }
     rson = {
         'FileID': 573785173,
         'FileVersion': 8,
@@ -2948,10 +3018,19 @@ def decompile(scr_path, out_path=None, lang_path=None):
         'ScriptName': script_name,
         'ScriptFileOut': f'D:\\{script_name}.scr',
         'ScriptTextOut': f'D:\\{script_name}.txt',
+        'LangDatIn': '',
+        'LangDatOut': '',
+        'MainDatIn': '',
+        'MainDatOut': '',
+        'CacheDatIn': '',
+        'CacheDatOut': '',
+        'ExportLangTxt': False,
+        'ExportLangDat': False,
         'Visual.Objects': [vo],
         'Visual.Links': links,
         'BlockPar.EC.Total.Strings': 0,
         'BlockPar.EC': [],
+        'Rect.Text': [banner],
     }
     json.dump(rson, open(out_path,'w',encoding='utf-8'), ensure_ascii=False, indent=4)
     logger.info('[+] Done      %s -> %s', Path(scr_path).name, out_path)

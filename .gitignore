@@ -6,6 +6,9 @@ __pycache__/
 /decompile_result/
 *_check.scr
 *.dialogs.txt
+# Выход декомпилятора рядом с эталонами (регенерируется из reference/*.scr)
+/reference/*.rson
+!/reference/*_recovery.rson
 
 # Сторонние утилиты (не распространяем чужие бинари) — положить локально
 /RScript_*/
