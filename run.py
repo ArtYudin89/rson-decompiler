@@ -22,6 +22,12 @@ Examples:
   # Батч по каталогу (рекурсивно, результат всегда рядом с исходным):
   python run.py blockpar path/to/Mod            # все *.dat -> *.txt
   python run.py blockpar path/to/Mod --to-dat   # все *.txt -> *.dat
+
+  # PKG-архивы ресурсов (замена pack/unpack из ResEditor):
+  python run.py pkg list   DATA/english.pkg
+  python run.py pkg unpack DATA/english.pkg out_dir/
+  python run.py pkg pack   out_dir/ new.pkg          # zl02-сжатие как в оригинале
+  python run.py pkg pack   out_dir/ new.pkg --raw    # без сжатия
 """
 import argparse, json, re, shutil, struct, subprocess, sys, os, tempfile, time, logging
 from pathlib import Path
@@ -996,8 +1002,12 @@ def main():
 
 
 if __name__ == '__main__':
-    # `blockpar` subcommand for dat<->txt; everything else is the SCR→RSON runner.
+    # Subcommands: `blockpar` (dat<->txt), `pkg` (.pkg pack/unpack);
+    # everything else is the SCR→RSON runner.
     if len(sys.argv) > 1 and sys.argv[1] == 'blockpar':
         cmd_blockpar(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == 'pkg':
+        import srpkg
+        sys.exit(srpkg.main(sys.argv[2:]))
     else:
         main()

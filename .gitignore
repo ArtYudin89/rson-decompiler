@@ -14,6 +14,8 @@ __pycache__/
 # Сторонние утилиты (не распространяем чужие бинари) — положить локально
 /RScript_*/
 /BlockParEditor_*/
+/ResEditor_*/
+/ResEditor_*.zip
 
 # Игровые файлы (копирайт) — не коммитим
 /Space Rangers HD*/
