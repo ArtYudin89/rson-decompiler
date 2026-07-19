@@ -13,6 +13,15 @@ Examples:
 
   # Один файл:
   python run.py path/to/Mod_Example.scr --out-dir decompile_result --check
+
+  # BlockPar dat<->txt (обёртка над BlockParEditor.exe --cli --convert;
+  # направление определяется по расширению source):
+  python run.py blockpar path/to/Lang.dat              # -> Lang.txt рядом
+  python run.py blockpar path/to/CacheData.txt out/CacheData.dat
+
+  # Батч по каталогу (рекурсивно, результат всегда рядом с исходным):
+  python run.py blockpar path/to/Mod            # все *.dat -> *.txt
+  python run.py blockpar path/to/Mod --to-dat   # все *.txt -> *.dat
 """
 import argparse, json, re, shutil, struct, subprocess, sys, os, tempfile, time, logging
 from pathlib import Path
@@ -90,6 +99,80 @@ def _convert_lang_dat(lang_dat, blockpar, out_txt):
         return out_txt.exists()
     except Exception:
         return False
+
+
+def _run_blockpar(blockpar, source, dest=None, timeout=60):
+    """Convert a BlockPar file with BlockParEditor.exe --cli --convert.
+
+    Direction is chosen by BlockParEditor from the source extension:
+    .dat → .txt (decode) and .txt → .dat (encode). `dest` is optional; when
+    omitted the tool writes next to `source` with the swapped extension.
+
+    Like RScript, BlockParEditor is a Delphi GUI app: on bad input it pops a
+    MODAL error box ('Error open dat', 'Runtime error 217' on exit, …) that
+    would hang the process until timeout. We reuse the _dlgwatch pattern from
+    _run_rscript to press OK and capture the real error text. Falls back to a
+    plain timed subprocess when _dlgwatch is unavailable.
+
+    Returns (ok: bool, message: str) — message is the output path on success
+    or the captured error text on failure.
+    """
+    source = Path(source)
+    if not source.exists():
+        return False, f'source not found: {source}'
+    if dest is None:
+        out = source.with_suffix('.txt' if source.suffix.lower() == '.dat' else '.dat')
+    else:
+        out = Path(dest)
+    args = [str(blockpar), '--cli', '--convert', str(source)]
+    if dest is not None:
+        args.append(str(out))
+
+    start = time.time()
+    err = ''
+    try:
+        import _dlgwatch
+    except Exception:
+        _dlgwatch = None
+    try:
+        if _dlgwatch is None:
+            # No dialog watcher: a modal error box would hang until timeout.
+            try:
+                subprocess.run(args, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                err = 'timeout (modal dialog?)'
+        else:
+            proc = subprocess.Popen(args, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            deadline = time.time() + timeout
+            seen, dialogs = set(), []
+            while True:
+                rc = proc.poll()
+                for hwnd in _dlgwatch._find_dialogs(proc.pid):
+                    txt = _dlgwatch._dialog_text(hwnd)
+                    if txt not in seen:
+                        seen.add(txt)
+                        if 'Runtime error' not in txt:
+                            dialogs.append(txt)
+                    _dlgwatch._press_ok(hwnd)
+                if rc is not None:
+                    break
+                if time.time() > deadline:
+                    proc.kill(); proc.wait(5)
+                    break
+                time.sleep(0.15)
+            if dialogs:
+                err = '; '.join(dialogs)[:300]
+    except Exception as e:
+        return False, str(e)
+
+    # Success = the target was (re)written by this run and no error dialog showed.
+    # Comparing against the run's start time detects a fresh write even when the
+    # target already existed (e.g. decoding over an old sibling .txt).
+    if out.exists() and out.stat().st_mtime >= start - 2 and not err:
+        return True, str(out)
+    return False, err or f'no output written ({out.name})'
 
 
 def _find_lang_files(scr_file, stop_at):
@@ -722,6 +805,89 @@ def process_scr(scr, base_dir, out_dir, rscript, blockpar, check, timeout):
 
 
 # ---------------------------------------------------------------------------
+# `blockpar` subcommand: dat<->txt via BlockParEditor.exe
+# ---------------------------------------------------------------------------
+
+def cmd_blockpar(argv):
+    """Handle `python run.py blockpar <source> [dest]`.
+
+    source may be a single .dat/.txt file or a directory. For a directory the
+    conversion is a recursive batch (like the main runner's rglob('*.scr')):
+    every *.dat → *.txt sibling by default, or every *.txt → *.dat with
+    --to-dat. The result is always written next to the source file.
+    """
+    ap = argparse.ArgumentParser(
+        prog='run.py blockpar',
+        description='Конвертация BlockPar dat<->txt через BlockParEditor.exe '
+                    '(--cli --convert). Одиночный файл: направление по расширению '
+                    '(.dat→.txt, .txt→.dat). Каталог: рекурсивный батч, результат '
+                    'всегда рядом с исходным файлом.')
+    ap.add_argument('source',
+                    help='Файл .dat/.txt (CacheData/Main/Lang…) ИЛИ каталог для '
+                         'рекурсивного батча')
+    ap.add_argument('dest', nargs='?', default=None,
+                    help='Путь результата — только для одиночного файла '
+                         '(по умолчанию рядом с source со сменой расширения)')
+    ap.add_argument('--to-dat', action='store_true',
+                    help='Батч по каталогу: конвертировать все *.txt → *.dat '
+                         '(по умолчанию все *.dat → *.txt)')
+    ap.add_argument('--blockpar', default=None, metavar='EXE',
+                    help='Путь к BlockParEditor.exe (авто-поиск если не задан)')
+    ap.add_argument('--timeout', type=int, default=60, metavar='SEC',
+                    help='Таймаут на конвертацию одного файла (по умолчанию 60)')
+    a = ap.parse_args(argv)
+
+    blockpar = _find_blockpar(a.blockpar)
+    if blockpar is None:
+        print('ERROR: BlockParEditor.exe не найден. Укажите путь через --blockpar '
+              'или положите BlockParEditor_1.9/ рядом с run.py.', file=sys.stderr)
+        sys.exit(1)
+
+    src = Path(a.source)
+
+    # --- Directory: recursive batch, result always next to each source file ---
+    if src.is_dir():
+        if a.dest is not None:
+            print('ERROR: для каталога аргумент dest не поддерживается — каждый '
+                  'файл кладётся рядом с исходным.', file=sys.stderr)
+            sys.exit(1)
+        pattern = '*.txt' if a.to_dat else '*.dat'
+        files = sorted(src.rglob(pattern))
+        if not files:
+            print(f'ERROR: файлы {pattern} не найдены в {src} (рекурсивно)',
+                  file=sys.stderr)
+            sys.exit(1)
+        ok = fail = 0
+        for f in files:
+            good, msg = _run_blockpar(blockpar, f, None, a.timeout)
+            try:
+                rel = f.relative_to(src)
+            except ValueError:
+                rel = f
+            if good:
+                ok += 1
+                print(f'  OK    {rel} -> {Path(msg).name}')
+            else:
+                fail += 1
+                print(f'  FAIL  {rel}: {msg}')
+        print()
+        print(f'Итого: OK={ok}  FAIL={fail}  '
+              f'({pattern} → {"dat" if a.to_dat else "txt"}, рекурсивно, рядом с исходным)')
+        sys.exit(2 if fail else 0)
+
+    # --- Single file: direction by extension ---
+    if not src.exists():
+        print(f'ERROR: {src} не найден', file=sys.stderr)
+        sys.exit(1)
+    ok, msg = _run_blockpar(blockpar, src, a.dest, a.timeout)
+    if ok:
+        print(f'OK: {src.name} -> {msg}')
+    else:
+        print(f'FAIL: {src}: {msg}', file=sys.stderr)
+        sys.exit(2)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -830,4 +996,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # `blockpar` subcommand for dat<->txt; everything else is the SCR→RSON runner.
+    if len(sys.argv) > 1 and sys.argv[1] == 'blockpar':
+        cmd_blockpar(sys.argv[2:])
+    else:
+        main()
