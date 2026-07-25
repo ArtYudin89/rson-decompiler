@@ -28,6 +28,12 @@ Examples:
   python run.py pkg unpack DATA/english.pkg out_dir/
   python run.py pkg pack   out_dir/ new.pkg          # zl02-сжатие как в оригинале
   python run.py pkg pack   out_dir/ new.pkg --raw    # без сжатия
+
+  # Изображения gi/gai/hai -> PNG (декодер, замена просмотра из ResEditor):
+  python run.py gi info   Image.gi                   # разбор заголовка/слоёв
+  python run.py gi decode Image.gi  out/             # -> out/Image.png
+  python run.py gi decode Anim.gai  out/anim/        # -> out/anim/Anim_NNN.png + .times.json
+  python run.py gi verify path/to/Mods               # самотест (заголовки + расход байт)
 """
 import argparse, json, re, shutil, struct, subprocess, sys, os, tempfile, time, logging
 from pathlib import Path
@@ -1002,12 +1008,15 @@ def main():
 
 
 if __name__ == '__main__':
-    # Subcommands: `blockpar` (dat<->txt), `pkg` (.pkg pack/unpack);
-    # everything else is the SCR→RSON runner.
+    # Subcommands: `blockpar` (dat<->txt), `pkg` (.pkg pack/unpack),
+    # `gi` (gi/gai/hai image -> PNG); everything else is the SCR→RSON runner.
     if len(sys.argv) > 1 and sys.argv[1] == 'blockpar':
         cmd_blockpar(sys.argv[2:])
     elif len(sys.argv) > 1 and sys.argv[1] == 'pkg':
         import srpkg
         sys.exit(srpkg.main(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == 'gi':
+        import srgi
+        sys.exit(srgi.main(sys.argv[2:]))
     else:
         main()

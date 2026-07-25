@@ -23,6 +23,13 @@ Binary layout (little-endian):
                          dataType 2 (ZL02): repeated [u32 packed][ "ZL02" u32 raw zlib ]
                                             with <=64 KiB uncompressed per chunk
                          dataType 3       : directory (offset -> its dir header)
+
+Byte-exact repack rules (recovered by diffing all stock archives, 19/19 DATA):
+  * RAW vs ZL02 is chosen by name+size, NOT by whether zlib helps: a file is RAW
+    iff it is .jpg/.png or smaller than 128 bytes; everything else is ZL02.
+  * Item order within a directory: all sub-directories first, then files; each
+    group sorted case-insensitively (upper-cased names).
+  * The fullName field is the upper-cased name, upper-casing Cyrillic cp1251 too.
 """
 import argparse
 import os
@@ -119,10 +126,20 @@ def _walk(items, prefix=""):
             yield prefix + name, it, False
 
 
-def cmd_list(args):
-    _, root = load_pkg(args.pkg)
-    nfiles = 0
-    total = 0
+def _iter_pkgs(root):
+    """Yield the pkg itself if root is a file, else every *.pkg under it."""
+    if os.path.isfile(root):
+        yield root
+        return
+    for dirpath, _, names in os.walk(root):
+        for n in names:
+            if n.lower().endswith(".pkg"):
+                yield os.path.join(dirpath, n)
+
+
+def _list_one(pkg):
+    _, root = load_pkg(pkg)
+    nfiles = total = 0
     for path, it, is_dir in _walk(root):
         if is_dir:
             print(path)
@@ -131,14 +148,32 @@ def cmd_list(args):
             print("  %s %10d  %s" % (tag, it.size, path))
             nfiles += 1
             total += it.size
+    return nfiles, total
+
+
+def cmd_list(args):
+    if os.path.isdir(args.pkg):
+        pkgs = sorted(_iter_pkgs(args.pkg))
+        if not pkgs:
+            print("no .pkg files under %s" % args.pkg, file=sys.stderr)
+            return 1
+        gfiles = gbytes = 0
+        for pkg in pkgs:
+            print("== %s ==" % os.path.relpath(pkg, args.pkg))
+            nf, tb = _list_one(pkg)
+            gfiles += nf
+            gbytes += tb
+        print("--- %d archives, %d files, %d bytes uncompressed"
+              % (len(pkgs), gfiles, gbytes), file=sys.stderr)
+        return 0
+    nfiles, total = _list_one(args.pkg)
     print("--- %d files, %d bytes uncompressed" % (nfiles, total), file=sys.stderr)
 
 
 # ------------------------------------------------------------------------- unpack
 
-def cmd_unpack(args):
-    buf, root = load_pkg(args.pkg)
-    out_root = args.outdir
+def _unpack_one(pkg, out_root, verbose):
+    buf, root = load_pkg(pkg)
     os.makedirs(out_root, exist_ok=True)
     n = 0
     for path, it, is_dir in _walk(root):
@@ -150,9 +185,31 @@ def cmd_unpack(args):
             with open(dest, "wb") as f:
                 f.write(extract_file(buf, it))
             n += 1
-            if args.verbose:
+            if verbose:
                 print(path)
-    print("unpacked %d files -> %s" % (n, out_root), file=sys.stderr)
+    return n
+
+
+def cmd_unpack(args):
+    if os.path.isdir(args.pkg):
+        pkgs = sorted(_iter_pkgs(args.pkg))
+        if not pkgs:
+            print("no .pkg files under %s" % args.pkg, file=sys.stderr)
+            return 1
+        gn = 0
+        for pkg in pkgs:
+            rel = os.path.relpath(pkg, args.pkg)
+            # keep the .pkg in the folder name: items.pkg -> items.pkg/ (a "package
+            # directory") so `pkg pack <dir>` can round-trip it back byte-for-byte.
+            out_root = os.path.join(args.outdir, rel)
+            n = _unpack_one(pkg, out_root, args.verbose)
+            gn += n
+            print("  %s -> %s (%d files)" % (rel, out_root, n))
+        print("unpacked %d archives, %d files -> %s"
+              % (len(pkgs), gn, args.outdir), file=sys.stderr)
+        return 0
+    n = _unpack_one(args.pkg, args.outdir, args.verbose)
+    print("unpacked %d files -> %s" % (n, args.outdir), file=sys.stderr)
 
 
 # --------------------------------------------------------------------------- pack
@@ -175,41 +232,78 @@ def _build_tree(src_dir):
     root = Node("", True)
 
     def rec(node, path):
-        for entry in sorted(os.listdir(path)):
+        # Reproduce the archive's own item ordering, required for byte-exact repack:
+        #   1) all sub-directories first, then all files;
+        #   2) within each group, case-insensitive (upper-cased) name order — NOT
+        #      plain ASCII, which sorts lowercase after uppercase ("ranger" after
+        #      "Storopia") and reshuffles the item table.
+        dirs, files = [], []
+        for entry in os.listdir(path):
             full = os.path.join(path, entry)
             if os.path.isdir(full):
-                child = Node(entry, True)
-                node.children.append(child)
-                rec(child, full)
+                dirs.append(entry)
             elif os.path.isfile(full):
-                child = Node(entry, False)
-                with open(full, "rb") as f:
-                    child.data = f.read()
-                node.children.append(child)
+                files.append(entry)
+        key = lambda s: s.upper()
+        for entry in sorted(dirs, key=key):
+            child = Node(entry, True)
+            node.children.append(child)
+            rec(child, os.path.join(path, entry))
+        for entry in sorted(files, key=key):
+            child = Node(entry, False)
+            with open(os.path.join(path, entry), "rb") as f:
+                child.data = f.read()
+            node.children.append(child)
     rec(root, src_dir)
     return root
 
 
-def _encode_payload(data, compress):
-    """Return the payload bytes that follow the 4-byte prefix, and data_type."""
-    if not compress:
+RAW_EXT = (".jpg", ".png")   # already-compressed external images: never zlib'd
+RAW_MAX = 128                # files below this many bytes are stored RAW verbatim
+
+
+def _encode_payload(name, data, compress):
+    """Return the payload bytes that follow the 4-byte prefix, and the data_type.
+
+    ResEditor's RAW-vs-ZL02 choice — recovered by diffing every stock archive
+    (9087 files, 0 exceptions) — is purely by name and size, NOT by testing
+    whether zlib helps: a file ships RAW iff it is an already-compressed external
+    image (.jpg/.png) or is smaller than 128 bytes; everything else is ZL02. Some
+    >=128 B files ship ZL02 even when zlib inflates them, and some compressible
+    <128 B files ship RAW — so a "does it shrink?" test would mis-tag both and
+    break byte-exact repacking.
+    """
+    ext = os.path.splitext(name)[1].lower()
+    if not compress or ext in RAW_EXT or len(data) < RAW_MAX:
         return data, TYPE_RAW
     out = bytearray()
-    for i in range(0, max(len(data), 1), CHUNK_RAW):
+    for i in range(0, len(data), CHUNK_RAW):     # len>=128 here, so >=1 full chunk
         chunk = data[i:i + CHUNK_RAW]
         z = zlib.compress(chunk, 9)
         blob = ZL02_SIG + struct.pack("<I", len(chunk)) + z
         out += struct.pack("<I", len(blob)) + blob
-        if not data:            # zero-length file: emit one empty chunk then stop
-            break
     return bytes(out), TYPE_ZL02
+
+
+def _cp1251_upper(nb):
+    """Upper-case a cp1251 byte string the way ResEditor builds the fullName field:
+    ASCII a-z and Cyrillic а-я (0xE0-0xFF) both map by -0x20, plus ё(0xB8)->Ё(0xA8).
+    (Plain ASCII-only upper would leave Cyrillic mod/file names lower-cased and
+    diverge from stock archives — e.g. "копия" must become "КОПИЯ".)"""
+    out = bytearray(nb)
+    for i, c in enumerate(out):
+        if 0x61 <= c <= 0x7A or 0xE0 <= c <= 0xFF:
+            out[i] = c - 0x20
+        elif c == 0xB8:
+            out[i] = 0xA8
+    return bytes(out)
 
 
 def _encode_names(name):
     nb = name.encode(NAME_ENC, "replace")
     if len(nb) >= NAME_FIELD:
         raise ValueError("name too long (>%d bytes): %r" % (NAME_FIELD - 1, name))
-    full = bytes(c - 32 if 0x61 <= c <= 0x7A else c for c in nb)  # ASCII upper
+    full = _cp1251_upper(nb)
     return (full.ljust(NAME_FIELD, b"\x00"), nb.ljust(NAME_FIELD, b"\x00"))
 
 
@@ -221,7 +315,7 @@ def _layout(node, cur, compress):
         if child.is_dir:
             cur = _layout(child, cur, compress)
         else:
-            child.payload, child.data_type = _encode_payload(child.data, compress)
+            child.payload, child.data_type = _encode_payload(child.name, child.data, compress)
             child.off = cur
             cur += 4 + len(child.payload)   # 4-byte prefix + payload
     return cur
@@ -249,28 +343,75 @@ def _emit(node, buf):
             buf[child.off + 4:child.off + 4 + len(child.payload)] = child.payload
 
 
-def cmd_pack(args):
-    compress = not args.raw
-    root = _build_tree(args.srcdir)
+def _pack_one(srcdir, pkg, compress):
+    """Pack a single directory tree into one .pkg. Returns byte size."""
+    root = _build_tree(srcdir)
     total = _layout(root, 4, compress)      # root header at offset 4
     buf = bytearray(total)
     struct.pack_into("<I", buf, 0, 4)       # pointer to root dir header
     _emit(root, buf)
-    with open(args.pkg, "wb") as f:
+    os.makedirs(os.path.dirname(pkg) or ".", exist_ok=True)
+    with open(pkg, "wb") as f:
         f.write(buf)
-    print("packed -> %s (%d bytes, %s)"
-          % (args.pkg, len(buf), "raw" if args.raw else "zl02"), file=sys.stderr)
+    return len(buf)
+
+
+def _iter_pkg_dirs(root):
+    """Yield every '*.pkg' directory (an unpacked-archive dir) under root, without
+    descending into one (its contents are archive files, not nested archives)."""
+    for dirpath, dirnames, _ in os.walk(root):
+        keep = []
+        for d in dirnames:
+            if d.lower().endswith(".pkg"):
+                yield os.path.join(dirpath, d)
+            else:
+                keep.append(d)
+        dirnames[:] = keep                  # prune: do not recurse into .pkg dirs
+
+
+def cmd_pack(args):
+    compress = not args.raw
+    # Direction is chosen by the output argument, not by scanning contents:
+    #   pack SRC out.pkg   -> single archive (SRC tree -> that file)
+    #   pack SRC outdir     -> batch: every *.pkg/ dir under SRC -> outdir/<rel>
+    if args.pkg.lower().endswith(".pkg"):
+        size = _pack_one(args.srcdir, args.pkg, compress)
+        print("packed -> %s (%d bytes, %s)"
+              % (args.pkg, size, "raw" if args.raw else "zl02"), file=sys.stderr)
+        return 0
+    pkg_dirs = sorted(_iter_pkg_dirs(args.srcdir))
+    if not pkg_dirs:
+        print("no *.pkg directories under %s — batch pack rebuilds unpacked-archive "
+              "dirs (e.g. items.pkg/). For a single archive, give an output path "
+              "ending in .pkg." % args.srcdir, file=sys.stderr)
+        return 1
+    outdir = args.pkg
+    total_bytes = 0
+    for d in pkg_dirs:
+        rel = os.path.relpath(d, args.srcdir)      # e.g. items.pkg or nested/deep.pkg
+        dest = os.path.join(outdir, rel)
+        size = _pack_one(d, dest, compress)
+        total_bytes += size
+        print("  %s -> %s (%d bytes)" % (rel, dest, size))
+    print("packed %d archives, %d bytes -> %s (%s)"
+          % (len(pkg_dirs), total_bytes, outdir, "raw" if args.raw else "zl02"),
+          file=sys.stderr)
+    return 0
 
 
 # ------------------------------------------------------------------------- verify
 
-def cmd_verify(args):
-    """Round-trip self-test: unpack pkg -> repack -> unpack, compare all bytes."""
+def _verify_one(pkg):
+    """Round-trip self-test: unpack pkg -> repack -> unpack, compare all bytes.
+
+    Returns (ok, lines) — lines are the per-mode result strings to print.
+    """
     import tempfile
     import shutil
-    buf, root = load_pkg(args.pkg)
+    buf, root = load_pkg(pkg)
     orig = {p: extract_file(buf, it) for p, it, d in _walk(root) if not d}
     tmp = tempfile.mkdtemp(prefix="srpkg_")
+    lines = []
     try:
         srcdir = os.path.join(tmp, "src")
         for path, data in orig.items():
@@ -292,14 +433,43 @@ def cmd_verify(args):
             if got != orig:
                 miss = set(orig) ^ set(got)
                 bad = [p for p in orig if p in got and orig[p] != got[p]]
-                print("FAIL (%s): missing/extra=%r content-diff=%r"
-                      % (mode, list(miss)[:5], bad[:5]))
-                return 1
-            print("OK  %-4s round-trip: %d files, %d -> %d bytes"
-                  % (mode, len(orig), len(buf), len(b2)))
-        return 0
+                lines.append("FAIL (%s): missing/extra=%r content-diff=%r"
+                             % (mode, list(miss)[:5], bad[:5]))
+                return False, lines
+            lines.append("OK  %-4s round-trip: %d files, %d -> %d bytes"
+                         % (mode, len(orig), len(buf), len(b2)))
+        return True, lines
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def cmd_verify(args):
+    if os.path.isdir(args.pkg):
+        pkgs = sorted(_iter_pkgs(args.pkg))
+        if not pkgs:
+            print("no .pkg files under %s" % args.pkg, file=sys.stderr)
+            return 1
+        ok = fail = 0
+        for pkg in pkgs:
+            rel = os.path.relpath(pkg, args.pkg)
+            try:
+                good, lines = _verify_one(pkg)
+            except Exception as e:                       # noqa: BLE001 - report, don't crash
+                good, lines = False, ["exception: %s" % e]
+            if good:
+                ok += 1
+                print("OK   %s" % rel)
+            else:
+                fail += 1
+                print("FAIL %s" % rel)
+                for ln in lines:
+                    print("       %s" % ln)
+        print("--- %d archives: %d OK, %d FAIL" % (len(pkgs), ok, fail), file=sys.stderr)
+        return 1 if fail else 0
+    good, lines = _verify_one(args.pkg)
+    for ln in lines:
+        print(ln)
+    return 0 if good else 1
 
 
 # ----------------------------------------------------------------------------- cli
@@ -310,24 +480,26 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("list", help="list archive contents")
-    p.add_argument("pkg")
+    p.add_argument("pkg", help=".pkg file, or a directory to scan recursively")
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("unpack", help="extract archive to a directory")
-    p.add_argument("pkg")
-    p.add_argument("outdir")
+    p.add_argument("pkg", help=".pkg file, or a directory of archives to batch-unpack")
+    p.add_argument("outdir", help="output dir; in batch each archive lands in "
+                                  "outdir/<rel>/ as a package dir (e.g. items.pkg/)")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=cmd_unpack)
 
-    p = sub.add_parser("pack", help="build archive from a directory")
-    p.add_argument("srcdir")
-    p.add_argument("pkg")
+    p = sub.add_parser("pack", help="build archive(s) from a directory")
+    p.add_argument("srcdir", help="dir to pack; in batch, its tree of *.pkg/ package dirs")
+    p.add_argument("pkg", help="output: path ending in .pkg -> single archive; "
+                               "otherwise a dir -> batch-rebuild every *.pkg/ under srcdir")
     p.add_argument("--raw", action="store_true",
                    help="store uncompressed (default: ZL02/zlib)")
     p.set_defaults(func=cmd_pack)
 
     p = sub.add_parser("verify", help="round-trip self-test on an existing pkg")
-    p.add_argument("pkg")
+    p.add_argument("pkg", help=".pkg file, or a directory to verify every archive under it")
     p.set_defaults(func=cmd_verify)
 
     args = ap.parse_args(argv)
