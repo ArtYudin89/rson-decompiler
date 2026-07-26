@@ -29,10 +29,12 @@ Examples:
   python run.py pkg pack   out_dir/ new.pkg          # zl02-сжатие как в оригинале
   python run.py pkg pack   out_dir/ new.pkg --raw    # без сжатия
 
-  # Изображения gi/gai/hai -> PNG (декодер, замена просмотра из ResEditor):
+  # Изображения gi/gai/hai <-> PNG (замена просмотра/сборки из ResEditor):
   python run.py gi info   Image.gi                   # разбор заголовка/слоёв
   python run.py gi decode Image.gi  out/             # -> out/Image.png
   python run.py gi decode Anim.gai  out/anim/        # -> out/anim/Anim_NNN.png + .times.json
+  python run.py gi encode Image.png Image.gi         # обратно: PNG -> .gi (lossless ARGB)
+  python run.py gi encode out/anim/ Anim.gai         # папка кадров -> .gai/.hai
   python run.py gi verify path/to/Mods               # самотест (заголовки + расход байт)
 """
 import argparse, json, re, shutil, struct, subprocess, sys, os, tempfile, time, logging
