@@ -172,12 +172,31 @@ def cmd_list(args):
 
 # ------------------------------------------------------------------------- unpack
 
+def safe_destination(out_root, path):
+    """Resolve an archive path under out_root, refusing anything that escapes.
+
+    Entry names live in the archive's own 63-byte name fields, so a crafted
+    .pkg can put '..' or a drive letter there and have unpack write wherever it
+    likes. Stock archives never do; third-party mods are what this tool is
+    pointed at, and `unpack <dir>` walks a whole tree of them at once.
+    """
+    parts = [p for p in path.split("/") if p not in ("", ".")]
+    if any(p == ".." or os.path.isabs(p) or os.path.splitdrive(p)[0] for p in parts):
+        raise ValueError("unsafe archive path %r" % path)
+    dest = os.path.join(out_root, *parts)
+    root_abs = os.path.abspath(out_root)
+    dest_abs = os.path.abspath(dest)
+    if dest_abs != root_abs and not dest_abs.startswith(root_abs + os.sep):
+        raise ValueError("archive path escapes output directory: %r" % path)
+    return dest
+
+
 def _unpack_one(pkg, out_root, verbose):
     buf, root = load_pkg(pkg)
     os.makedirs(out_root, exist_ok=True)
     n = 0
     for path, it, is_dir in _walk(root):
-        dest = os.path.join(out_root, *path.split("/"))
+        dest = safe_destination(out_root, path)
         if is_dir:
             os.makedirs(dest.rstrip(os.sep), exist_ok=True)
         else:
