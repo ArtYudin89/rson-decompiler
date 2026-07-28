@@ -33,6 +33,8 @@ Examples:
   python run.py gi info   Image.gi                   # разбор заголовка/слоёв
   python run.py gi decode Image.gi  out/             # -> out/Image.png
   python run.py gi decode Anim.gai  out/anim/        # -> out/anim/Anim_NNN.png + .times.json
+                                                     #    (haveBackground=1 -> кадры кладутся
+                                                     #     на соседний Anim.gi; --bg / --no-bg)
   python run.py gi encode Image.png Image.gi         # обратно: PNG -> .gi (lossless ARGB)
   python run.py gi encode out/anim/ Anim.gai         # папка кадров -> .gai/.hai
   python run.py gi verify path/to/Mods               # самотест (заголовки + расход байт)
