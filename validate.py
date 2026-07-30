@@ -7,7 +7,8 @@ import decompiler
 
 def ref_counts(rson_path):
     """Extract G/S/D counts from reference RSON."""
-    txt = open(rson_path, encoding='utf-8-sig', errors='replace').read()
+    with open(rson_path, encoding='utf-8-sig', errors='replace') as f:
+        txt = f.read()
     # Format 1: "Groups.Count": N (compact decompiler output)
     if '"Groups.Count"' in txt:
         def get(key):
@@ -45,7 +46,8 @@ errors = []
 
 for scr in scrs:
     name = os.path.splitext(os.path.basename(scr))[0]
-    data = open(scr, 'rb').read()
+    with open(scr, 'rb') as f:
+        data = f.read()
     try:
         vo, _ = decompiler.parse(data, {})
         g = len(vo['Groups']); s = len(vo['States']); d = len(vo['Dialogs'])
