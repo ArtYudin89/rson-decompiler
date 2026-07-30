@@ -73,7 +73,8 @@ def load_lang(path):
     """
     lang = {}
     try:
-        raw = open(path, 'rb').read()
+        with open(path, 'rb') as f:
+            raw = f.read()
         if raw[:2] == b'\xff\xfe':
             txt = raw[2:].decode('utf-16-le')
         elif raw[:2] == b'\xfe\xff':
