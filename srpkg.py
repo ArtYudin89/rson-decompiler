@@ -434,7 +434,7 @@ def _verify_one(pkg):
     try:
         srcdir = os.path.join(tmp, "src")
         for path, data in orig.items():
-            dest = os.path.join(srcdir, *path.split("/"))
+            dest = safe_destination(srcdir, path)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "wb") as f:
                 f.write(data)

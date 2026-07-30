@@ -157,6 +157,27 @@ class RoundTripTests(unittest.TestCase):
             self.assertEqual([it.data_type for it in root], [srpkg.TYPE_RAW])
 
 
+def _crafted_escape_pkg(directory):
+    """Архив со сбежавшим именем: 'ModuleInfo.txt' -> '../../evil.txt'.
+
+    Имена лежат в полях фиксированной длины (name по +71, fullName по +8), так
+    что подмена равной длины не сдвигает ни смещений, ни размеров — получается
+    ровно то, что может прислать чужой мод.
+    """
+    src = os.path.join(directory, "src")
+    os.makedirs(src)
+    _sample_tree(src)
+    pkg = os.path.join(directory, "evil.pkg")
+    srpkg._pack_one(src, pkg, compress=True)
+    with open(pkg, "rb") as f:
+        blob = f.read()
+    blob = blob.replace(b"ModuleInfo.txt", b"../../evil.txt")
+    blob = blob.replace(b"MODULEINFO.TXT", b"../../EVIL.TXT")
+    with open(pkg, "wb") as f:
+        f.write(blob)
+    return pkg
+
+
 class UnsafePathTests(unittest.TestCase):
     """Имена приходят из архива, а архивы — чужие."""
 
@@ -189,6 +210,25 @@ class UnsafePathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(srpkg.safe_destination(directory, "DATA/"),
                              os.path.join(directory, "DATA"))
+
+
+class CraftedArchiveTests(unittest.TestCase):
+    """Оба места, где на диск пишутся имена из архива, а не с диска."""
+
+    def test_unpack_refuses_a_crafted_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pkg = _crafted_escape_pkg(directory)
+            out = os.path.join(directory, "out")
+            with self.assertRaises(ValueError):
+                srpkg._unpack_one(pkg, out, verbose=False)
+            self.assertFalse(os.path.exists(os.path.join(directory, "evil.txt")))
+
+    def test_verify_refuses_a_crafted_name(self):
+        """verify раскладывает содержимое во временный каталог тем же именем."""
+        with tempfile.TemporaryDirectory() as directory:
+            pkg = _crafted_escape_pkg(directory)
+            with self.assertRaises(ValueError):
+                srpkg._verify_one(pkg)
 
 
 if __name__ == "__main__":
