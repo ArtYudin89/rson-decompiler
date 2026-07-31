@@ -112,6 +112,233 @@ class AnimationTests(unittest.TestCase):
         self.assertEqual(bytes(decoded[0].buf), frames[0][2])
 
 
+def _sprite(w=11, h=9):
+    """Спрайт как в игре: непрозрачное ядро, полупрозрачная кайма, пустые поля."""
+    px = bytearray(w * h * 4)
+    for y in range(h):
+        for x in range(w):
+            o = (y * w + x) * 4
+            if 2 <= x < w - 2 and 2 <= y < h - 2:          # ядро
+                px[o:o + 4] = bytes(((x * 23) % 256, (y * 37) % 256, 90, 255))
+            elif 1 <= x < w - 1 and 1 <= y < h - 1:        # кайма
+                px[o:o + 4] = bytes((200, 100, (x * 11) % 256, 40 + 8 * x))
+    return w, h, bytes(px)
+
+
+class RleEncoderTests(unittest.TestCase):
+    """type-1/2/3 — lossy по построению: цвет уходит в R5G6B5, альфа в 6 бит.
+
+    Поэтому гейт другой, чем у argb: не `decode(encode(x)) == x`, а
+    `decode(encode(x)) == quantise_gi(x)` — энкодер обязан только квантовать и
+    ничего больше не терять. Плюс инвариант расхода слоя из `gi verify`.
+    """
+    RLE_FORMATS = ("rle565", "rle-alpha", "rle-indexed")
+
+    def test_round_trip_lands_on_the_quantised_image(self):
+        w, h, rgba = _sprite()
+        for fmt in self.RLE_FORMATS:
+            with self.subTest(fmt=fmt):
+                blob = srgi.encode_gi(w, h, rgba, fmt=fmt)
+                cv = srgi.decode_gi(blob)
+                self.assertEqual((cv.w, cv.h), (w, h))
+                self.assertEqual(bytes(cv.buf), srgi.quantise_gi(w, h, rgba, fmt))
+
+    def test_layer_budget_is_consumed_exactly(self):
+        w, h, rgba = _sprite()
+        for fmt in self.RLE_FORMATS:
+            with self.subTest(fmt=fmt):
+                self.assertEqual(srgi._verify_gi(srgi.encode_gi(w, h, rgba, fmt=fmt)), [])
+
+    def test_frames_look_like_the_games_own(self):
+        """Тип кадра, число слоёв и маски — ровно те, что во всём стоке."""
+        w, h, rgba = _sprite()
+        for fmt, typ, layers in (("rle565", 1, 1), ("rle-alpha", 2, 3),
+                                 ("rle-indexed", 3, 2)):
+            with self.subTest(fmt=fmt):
+                header = srgi.read_gi_header(srgi.encode_gi(w, h, rgba, fmt=fmt), 0)
+                self.assertEqual(header["type"], typ)
+                self.assertEqual(header["layerCount"], layers)
+                self.assertEqual((header["rM"], header["gM"], header["bM"], header["aM"]),
+                                 (0xF800, 0x7E0, 0x1F, 0x0))
+
+    def test_opaque_pixels_keep_all_255(self):
+        """6-битная альфа упирается в 252 — непрозрачное держит цветной слой."""
+        rgba = b"\x40\x80\xc0\xff" * 4
+        for fmt in ("rle-alpha", "rle-indexed"):
+            with self.subTest(fmt=fmt):
+                cv = srgi.decode_gi(srgi.encode_gi(2, 2, rgba, fmt=fmt))
+                self.assertEqual(bytes(cv.buf)[3::4], b"\xff" * 4)
+
+    def test_partial_alpha_snaps_to_a_multiple_of_four(self):
+        rgba = b"\x00\x00\x00\xc9" + b"\x00\x00\x00\xc8" + b"\x00\x00\x00\x03"
+        cv = srgi.decode_gi(srgi.encode_gi(3, 1, rgba, fmt="rle-alpha"))
+        self.assertEqual(bytes(cv.buf)[3::4], bytes((200, 200, 0)))
+
+    def test_layer_box_is_cropped_to_the_drawn_pixels(self):
+        """Пустые поля не должны стоить ни опкодов, ни строк."""
+        w, h = 40, 30
+        px = bytearray(w * h * 4)
+        for y in range(12, 15):
+            for x in range(20, 26):
+                px[(y * w + x) * 4:(y * w + x) * 4 + 4] = b"\x10\x20\x30\xff"
+        blob = srgi.encode_gi(w, h, bytes(px), fmt="rle-alpha")
+        box = srgi.read_layers(blob, 0, 3)[0][2:6]
+        self.assertEqual(tuple(box), (20, 12, 26, 15))
+
+    def test_a_blank_image_produces_empty_layers(self):
+        blob = srgi.encode_gi(4, 3, bytes(4 * 3 * 4), fmt="rle-alpha")
+        self.assertEqual([L[1] for L in srgi.read_layers(blob, 0, 3)], [0, 0, 0])
+        self.assertEqual(bytes(srgi.decode_gi(blob).buf), bytes(4 * 3 * 4))
+
+    def test_long_runs_split_across_opcodes(self):
+        """Пробег литералов и пропусков >0x7F не влезает в один опкод."""
+        w = 400
+        px = bytearray(w * 4)
+        for x in range(300, 400):
+            px[x * 4:x * 4 + 4] = b"\xff\xff\xff\xff"
+        blob = srgi.encode_gi(w, 1, bytes(px), fmt="rle565")
+        self.assertEqual(srgi._verify_gi(blob), [])
+        self.assertEqual(bytes(srgi.decode_gi(blob).buf),
+                         srgi.quantise_gi(w, 1, bytes(px), "rle565"))
+
+    def test_rle_indexed_refuses_an_oversized_palette(self):
+        """Цвета обязаны остаться различимыми и ПОСЛЕ квантования в 5/6/5."""
+        n = 300
+        rgba = b"".join([bytes(((i % 32) * 8, (i // 32) * 4, 0, 255))
+                         for i in range(n)])
+        with self.assertRaises(ValueError):
+            srgi.encode_gi(n, 1, rgba, fmt="rle-indexed")
+
+    def test_delta_is_not_a_standalone_gi(self):
+        with self.assertRaises(ValueError):
+            srgi.encode_gi(2, 2, bytes(16), fmt="delta")
+
+
+class DeltaFrameTests(unittest.TestCase):
+    """type-5: поканальные аддитивные разницы с предыдущим кадром.
+
+    Сдвиги shlc пишем нулевыми (0x88/0x88 — так же, как в большинстве стоковых
+    кадров), поэтому дельта восстанавливает все 8 бит канала и вся анимация
+    остаётся lossless — здесь гейт снова строгий, байт-в-байт.
+    """
+    def _frames(self, n=4, w=12, h=10):
+        base = bytearray(w * h * 4)
+        for i in range(len(base)):
+            base[i] = (i * 13) % 256
+        out = [bytes(base)]
+        for k in range(1, n):
+            nxt = bytearray(out[-1])
+            for y in range(3, 7):                          # шевелим только кусок
+                for x in range(4, 9):
+                    o = (y * w + x) * 4
+                    nxt[o] = (nxt[o] + 7 * k) % 256
+                    nxt[o + 3] = (nxt[o + 3] + 250) % 256   # заворот через 0
+            out.append(bytes(nxt))
+        return [(w, h, f) for f in out]
+
+    def test_delta_animation_is_lossless(self):
+        frames = self._frames()
+        times = [40] * len(frames)
+        decoded = srgi.decode_gai(srgi.encode_gai(frames, times, "delta"))[0]
+        for i, cv in enumerate(decoded):
+            with self.subTest(frame=i):
+                self.assertEqual(bytes(cv.buf), frames[i][2])
+
+    def test_delta_beats_keyframes_on_size(self):
+        frames = self._frames(n=8)
+        times = [40] * len(frames)
+        delta = len(srgi.encode_gai(frames, times, "delta"))
+        keys = len(srgi.encode_gai(frames, times, "argb"))
+        self.assertLess(delta, keys)
+
+    def test_frames_after_the_first_are_type_five(self):
+        frames = self._frames()
+        blob = srgi.encode_gai(frames, [40] * len(frames), "delta")
+        types = []
+        for i in range(len(frames)):
+            seek, size = struct.unpack_from("<2I", blob, srgi.GAI_HDR + i * 8)
+            types.append(srgi.read_gi_header(blob, seek)["type"])
+        self.assertEqual(types, [0] + [5] * (len(frames) - 1))
+
+    def test_delta_layer_carries_a_row_seek_table(self):
+        """Преамбула: размер потока, w, h слоя, shlc-нибблы, затем u32 на строку."""
+        frames = self._frames()
+        blob = srgi.encode_gai(frames, [40] * len(frames), "delta")
+        seek, _size = struct.unpack_from("<2I", blob, srgi.GAI_HDR + 8)
+        layer = srgi.read_layers(blob, seek, 1)[0]
+        base = seek + layer[0]
+        stream, lw, lh = struct.unpack_from("<3I", blob, base)
+        self.assertEqual((lw, lh), (layer[4] - layer[2], layer[5] - layer[3]))
+        self.assertEqual(blob[base + 12:base + 14], b"\x88\x88")
+        table = struct.unpack_from("<%dI" % lh, blob, base + 16)
+        self.assertEqual(table[0], 16 + 4 * lh)
+        self.assertEqual(list(table), sorted(table))
+        self.assertEqual(layer[1], 16 + 4 * lh + stream)
+
+    def test_only_the_changed_box_is_stored(self):
+        w, h, first = _sprite(20, 16)
+        second = bytearray(first)
+        for x in range(6, 9):
+            o = (5 * w + x) * 4
+            second[o] = (second[o] + 30) % 256
+        blob = srgi.encode_gai([(w, h, first), (w, h, bytes(second))], [40, 40], "delta")
+        seek, _size = struct.unpack_from("<2I", blob, srgi.GAI_HDR + 8)
+        box = srgi.read_layers(blob, seek, 1)[0][2:6]
+        self.assertEqual(tuple(box), (6, 5, 9, 6))
+
+    def test_an_unchanged_frame_costs_an_empty_layer(self):
+        w, h, px = _sprite()
+        blob = srgi.encode_gai([(w, h, px), (w, h, px)], [40, 40], "delta")
+        seek, _size = struct.unpack_from("<2I", blob, srgi.GAI_HDR + 8)
+        self.assertEqual(srgi.read_layers(blob, seek, 1)[0][1], 0)
+        self.assertEqual(bytes(srgi.decode_gai(blob)[0][1].buf), px)
+
+    def test_every_delta_magnitude_round_trips(self):
+        """Все четыре ширины опкода (1/2/4/8 бит) и оба знака сразу."""
+        n = 256
+        first = bytes(bytearray(n * 4))
+        second = bytes(bytearray([i % 256 for i in range(n * 4)]))
+        third = bytes(bytearray([(255 - i) % 256 for i in range(n * 4)]))
+        frames = [(n, 1, first), (n, 1, second), (n, 1, third)]
+        decoded = srgi.decode_gai(srgi.encode_gai(frames, [40] * 3, "delta"))[0]
+        for i, cv in enumerate(decoded):
+            with self.subTest(frame=i):
+                self.assertEqual(bytes(cv.buf), frames[i][2])
+
+    def test_delta_frames_consume_their_layer_exactly(self):
+        frames = self._frames()
+        blob = srgi.encode_gai(frames, [40] * len(frames), "delta")
+        for i in range(len(frames)):
+            seek, size = struct.unpack_from("<2I", blob, srgi.GAI_HDR + i * 8)
+            with self.subTest(frame=i):
+                self.assertEqual(srgi._verify_gi(blob[seek:seek + size]), [])
+
+
+class EncodeCliTests(unittest.TestCase):
+    """CLI: --format доводит новые типы до дерева, self-check ловит расхождение."""
+
+    def test_tree_rebuild_in_a_native_format(self):
+        w, h, rgba = _sprite()
+        with tempfile.TemporaryDirectory() as directory:
+            src, out = os.path.join(directory, "src"), os.path.join(directory, "out")
+            os.makedirs(src)
+            srgi.write_png(os.path.join(src, "pic.png"), w, h, rgba)
+            self.assertEqual(srgi.main(["encode", src, out, "--format", "rle-alpha"]), 0)
+            blob = srgi.load_any(os.path.join(out, "pic.gi"))
+            self.assertEqual(srgi.read_gi_header(blob, 0)["type"], 2)
+
+    def test_delta_tree_keeps_single_images_lossless(self):
+        """Одиночный PNG дельтой быть не может — он падает обратно в argb."""
+        w, h, rgba = _sprite()
+        with tempfile.TemporaryDirectory() as directory:
+            src, out = os.path.join(directory, "src"), os.path.join(directory, "out")
+            os.makedirs(src)
+            srgi.write_png(os.path.join(src, "pic.png"), w, h, rgba)
+            self.assertEqual(srgi.main(["encode", src, out, "--format", "delta"]), 0)
+            cv = srgi.decode_gi(srgi.load_any(os.path.join(out, "pic.gi")))
+            self.assertEqual(bytes(cv.buf), rgba)
+
+
 class BackgroundTests(unittest.TestCase):
     """haveBackground=1: кадры-дельты строятся на ключевом кадре из соседнего .gi.
 

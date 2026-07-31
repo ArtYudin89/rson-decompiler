@@ -883,6 +883,209 @@ def encode_gi_rgb565(w, h, rgba):
     return hdr + bytes(body)
 
 
+def _c565(r, g, b):
+    """Pack one RGB triple into the R5G6B5 word the RLE layers store."""
+    return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+
+
+def _rle_preamble(rle_len, w, h, pal_size=0):
+    """The 16-byte head every type-1/2/3 layer starts with: the RLE byte count,
+    the layer's own width and height, then the palette size at +12 (0 for the
+    palette-less layers, and 256 wraps to 0 - it is a single byte). Confirmed on
+    every stock frame: GILayerHeader.size == 16 + palette bytes + rle_len."""
+    return struct.pack("<3I", rle_len, w, h) + bytes((pal_size & 0xFF, 0, 0, 0))
+
+
+def _rle_layer(w, h, cells, pack):
+    """Encode one RLE layer body from a w*h list of cells (None == not drawn).
+
+    Emits the three opcodes the decoders accept - literal run (0x80 | cnt, cnt
+    in 1..0x7F, followed by cnt packed values), skip (cnt < 0x80) and newline -
+    with exactly one newline per row, which is what every stock layer does. Of
+    the two newline spellings the game uses (0x00 and 0x80) we write 0x00, the
+    one that dominates the stock corpus. A gap that runs to the end of a row
+    needs no skip: the newline already resets the cursor.
+    """
+    out = bytearray()
+    for row in range(h):
+        base = row * w
+        col = 0
+        while col < w:
+            if cells[base + col] is None:                # transparent gap
+                n = 1
+                while col + n < w and cells[base + col + n] is None:
+                    n += 1
+                col += n
+                if col >= w:
+                    break                                # trailing gap: drop it
+                while n:
+                    take = 0x7F if n > 0x7F else n
+                    out.append(take)
+                    n -= take
+            else:                                        # literal run
+                n = 1
+                while col + n < w and cells[base + col + n] is not None:
+                    n += 1
+                start = base + col
+                col += n
+                while n:
+                    take = 0x7F if n > 0x7F else n
+                    out.append(0x80 | take)
+                    out += pack(cells[start:start + take])
+                    start += take
+                    n -= take
+        out.append(0)                                    # newline, one per row
+    return bytes(out)
+
+
+def _crop_cells(w, h, cells):
+    """Tighten a w*h cell grid to the box that actually holds drawn cells.
+
+    Stock layers are cropped this way (a type-3 body layer in Weapon/Bomb.gai is
+    a 1x1 box inside a 25x22 frame), and it matters: an uncropped layer pays a
+    newline for every empty row and skip opcodes across the full width. Returns
+    (x0, y0, x1, y1, cells) with an empty box when nothing is drawn.
+    """
+    x0, y0, x1, y1 = w, h, 0, 0
+    for row in range(h):
+        base = row * w
+        line = cells[base:base + w]
+        if all(c is None for c in line):
+            continue
+        if row < y0:
+            y0 = row
+        y1 = row + 1
+        left = next(i for i, c in enumerate(line) if c is not None)
+        right = w - next(i for i, c in enumerate(reversed(line)) if c is not None)
+        if left < x0:
+            x0 = left
+        if right > x1:
+            x1 = right
+    if y1 == 0:
+        return 0, 0, 0, 0, []
+    return x0, y0, x1, y1, [cells[r * w + x0:r * w + x1] for r in range(y0, y1)]
+
+
+def _rle_from_grid(rows, pack):
+    """RLE one cropped grid (a list of equal-length rows) into a layer body."""
+    if not rows:
+        return b""
+    lw = len(rows[0])
+    flat = [c for row in rows for c in row]
+    return _rle_layer(lw, len(rows), flat, pack)
+
+
+def _pack565(vals):
+    return struct.pack("<%dH" % len(vals), *vals)
+
+
+def encode_gi_rle565(w, h, rgba):
+    """type 1: a single RLE R5G6B5 layer. Colour is quantised to 5/6/5 and any
+    pixel the layer draws comes out opaque - the format carries no alpha at all,
+    so fully transparent pixels are the only ones we can preserve (by skipping
+    them, which leaves the canvas clear)."""
+    cells = [None] * (w * h)
+    for i in range(w * h):
+        p = i * 4
+        if rgba[p + 3]:
+            cells[i] = _c565(rgba[p], rgba[p + 1], rgba[p + 2])
+    x0, y0, x1, y1, grid = _crop_cells(w, h, cells)
+    body = _rle_from_grid(grid, _pack565)
+    layer = (FRAME_HDR + LAYER_HDR, 16 + len(body) if body else 0,
+             x0, y0, x1, y1, 0, 0)
+    hdr = _gi_header(w, h, 1, (0xF800, 0x7E0, 0x1F, 0x0), [layer])
+    return hdr + (_rle_preamble(len(body), x1 - x0, y1 - y0) + body if body else b"")
+
+
+def _layer_body(w, h, cells, pack, pal_bytes=b"", pal_size=0):
+    """Crop a cell grid, RLE it and wrap it in its preamble.
+
+    Returns (box, size, blob) ready to drop into a layer table; an undrawn layer
+    comes back as a zero-size layer, which every decoder skips.
+    """
+    x0, y0, x1, y1, grid = _crop_cells(w, h, cells)
+    body = _rle_from_grid(grid, pack)
+    if not body:
+        return (0, 0, 0, 0), 0, b""
+    blob = _rle_preamble(len(body), x1 - x0, y1 - y0, pal_size) + pal_bytes + body
+    return (x0, y0, x1, y1), len(blob), blob
+
+
+def encode_gi_rle_alpha(w, h, rgba):
+    """type 2: the game's native sprite format - body colour, outline and alpha.
+
+    The body/outline split is a painting convention no decoder can tell apart,
+    so all colour goes into layer 0 and the outline layer is left empty
+    (attested in 512 stock frames). The alpha layer is the subtle part: 6-bit
+    alpha tops out at 4*(63-0) = 252, so a fully opaque pixel cannot be spelled
+    there at all. It does not need to be - layer 0 already paints every pixel it
+    covers at alpha 255, and a skip in the alpha layer keeps that. So layer 2
+    stores only the partly transparent fringe, which is both exact for opaque
+    pixels and far smaller than covering every pixel.
+    """
+    n = w * h
+    colour, alpha = [None] * n, [None] * n
+    for i in range(n):
+        p = i * 4
+        a = rgba[p + 3]
+        if a >> 2 == 0:                                  # quantises to invisible
+            continue
+        colour[i] = _c565(rgba[p], rgba[p + 1], rgba[p + 2])
+        if a != 255:
+            alpha[i] = 63 - (a >> 2)
+    cbox, csize, cblob = _layer_body(w, h, colour, _pack565)
+    abox, asize, ablob = _layer_body(w, h, alpha, bytes)
+    seek0 = FRAME_HDR + 3 * LAYER_HDR                    # three layers -> data at 160
+    seek2 = seek0 + csize                                # empty outline layer sits
+    layers = [(seek0, csize) + cbox + (0, 0),            # between them at zero size
+              (seek2, 0) + cbox + (0, 0),
+              (seek2, asize) + abox + (0, 0)]
+    hdr = _gi_header(w, h, 2, (0xF800, 0x7E0, 0x1F, 0x0), layers)
+    return hdr + cblob + ablob
+
+
+def encode_gi_rle_indexed(w, h, rgba):
+    """type 3: RLE palette indices, split the way the two layers are built.
+
+    Layer 0 indexes an R5G6B5 palette and paints opaque; layer 1 indexes a
+    colour+alpha palette. Like type 2, alpha 255 is unreachable in the
+    colour+alpha palette (it maxes out at 252), so opaque pixels go to layer 0
+    and only the partly transparent ones to layer 1. Each palette holds at most
+    256 entries.
+    """
+    n = w * h
+    opal, oindex, ocells = [], {}, [None] * n
+    apal, aindex, acells = [], {}, [None] * n
+    for i in range(n):
+        p = i * 4
+        a = rgba[p + 3]
+        if a >> 2 == 0:
+            continue
+        c = _c565(rgba[p], rgba[p + 1], rgba[p + 2])
+        if a == 255:
+            pal, index, cells, key = opal, oindex, ocells, c
+        else:
+            pal, index, cells, key = apal, aindex, acells, (c, 63 - (a >> 2))
+        k = index.get(key)
+        if k is None:
+            if len(pal) >= 256:
+                raise ValueError("image needs >256 palette entries - "
+                                 "use --format rle-alpha or argb")
+            k = len(pal)
+            index[key] = k
+            pal.append(key)
+        cells[i] = k
+    obuf = struct.pack("<%dH" % len(opal), *opal)
+    abuf = b"".join([struct.pack("<2H", c, a6) for (c, a6) in apal])
+    obox, osize, oblob = _layer_body(w, h, ocells, bytes, obuf, len(opal))
+    abox, asize, ablob = _layer_body(w, h, acells, bytes, abuf, len(apal))
+    seek0 = FRAME_HDR + 2 * LAYER_HDR                    # two layers -> data at 128
+    layers = [(seek0, osize) + obox + (0, 0),
+              (seek0 + osize, asize) + abox + (0, 0)]
+    hdr = _gi_header(w, h, 3, (0xF800, 0x7E0, 0x1F, 0x0), layers)
+    return hdr + oblob + ablob
+
+
 def _build_palette(rgba):
     """First-appearance RGBA palette + per-pixel indices, or (None, None) if >256."""
     pal = []
@@ -915,14 +1118,188 @@ def encode_gi_indexed(w, h, rgba):
     return hdr + bytes(idx) + b"".join(pal)
 
 
-_GI_FORMATS = {"argb": encode_gi_argb, "rgb565": encode_gi_rgb565, "indexed": encode_gi_indexed}
+# ------------------------------------------------------------------- type 5 delta
+# A delta frame stores per-channel additive differences against the previous
+# frame. The shift nibbles at +12/+13 pick how many low bits of each delta are
+# dropped; we write 0x88, i.e. shift 0 on all four channels - the majority
+# spelling in the stock corpus (4073 frames against 2060 of the 5/6/5/5 one) and
+# the one that makes the whole animation lossless.
+
+_DELTA_SUBS = ((2, 8), (4, 4), (16, 2), (256, 1))    # (largest delta, values/byte)
+
+
+def _emit_skip(out, n):
+    """Advance the cursor by n pixels: one byte up to 0x3E, else 0x3F + u16."""
+    while n:
+        if n <= 0x3E:
+            out.append(n)
+            return
+        take = n if n < 0xFFFF else 0xFFFF
+        out += b"\x3f" + struct.pack("<H", take)
+        n -= take
+
+
+def _delta_channel(ca, pa, out):
+    """Encode one scanline of one channel, then its terminating 0 byte.
+
+    Runs must share a sign and a bit width, so the row is cut into maximal
+    same-sign stretches and each is split greedily: at every position we try all
+    four widths, take how far each one reaches (<= 16 pixels, the opcode's
+    limit) and keep whichever costs the fewest bytes per pixel. That beats
+    "widen only when forced" on runs like 1,1,3 - one 2-bit opcode is cheaper
+    than a 1-bit opcode plus a second one for the 3.
+    """
+    w = len(ca)
+    sign = bytearray(w)
+    mag = [0] * w
+    for i in range(w):
+        d = (ca[i] - pa[i]) & 0xFF
+        if d:
+            if d <= 128:                                 # add d, or subtract
+                mag[i] = d                               # 256-d - whichever
+            else:                                        # magnitude is smaller
+                sign[i] = 1
+                mag[i] = 256 - d
+    x = pending = 0
+    while x < w:
+        if not mag[x]:
+            pending += 1
+            x += 1
+            continue
+        s = sign[x]
+        end = x + 1
+        while end < w and mag[end] and sign[end] == s:
+            end += 1
+        _emit_skip(out, pending)
+        pending = 0
+        while x < end:
+            best = None
+            for sub, (cap, per) in enumerate(_DELTA_SUBS):
+                n = 0
+                while n < 16 and x + n < end and mag[x + n] <= cap:
+                    n += 1
+                if not n:
+                    continue
+                cost = (1 + (n + per - 1) // per) / n
+                if best is None or cost < best[0] or (cost == best[0] and n > best[2]):
+                    best = (cost, sub, n)
+            _cost, sub, n = best
+            per = _DELTA_SUBS[sub][1]
+            bits = 8 // per
+            out.append(0x80 | ((sub + 4 * s) << 4) | (n - 1))
+            i = 0
+            while i < n:
+                take = per if n - i > per else n - i
+                byte = shift = 0
+                for k in range(take):
+                    byte |= (mag[x + i + k] - 1) << shift
+                    shift += bits
+                out.append(byte)
+                i += take
+            x += n
+    out.append(0)                    # channel done (the 4th one ends the row too)
+
+
+def encode_delta_frame(w, h, rgba, prev):
+    """type 5: a delta frame against `prev` (the previous frame's RGBA).
+
+    Only the changed bounding box is stored. The layer holds the 16-byte
+    preamble, a u32 offset per row - the seek table every stock delta frame
+    carries, pointing at each row's first opcode relative to the layer start -
+    and then the opcode stream, terminated by 0x40.
+    """
+    stride = w * 4
+    rows = [r for r in range(h)
+            if rgba[r * stride:(r + 1) * stride] != prev[r * stride:(r + 1) * stride]]
+    masks = (0xFF0000, 0xFF00, 0xFF, 0xFF000000)
+    if not rows:                                    # identical frame: an empty
+        layer = (FRAME_HDR + LAYER_HDR, 0, 0, 0, w, h, 0, 0)   # layer decodes as
+        return _gi_header(w, h, 5, masks, [layer])             # a copy of `prev`
+    y0, y1 = rows[0], rows[-1] + 1
+    x0, x1 = w, 0
+    for r in rows:                                  # narrow the box sideways too
+        a, b = rgba[r * stride:(r + 1) * stride], prev[r * stride:(r + 1) * stride]
+        i, j = 0, stride
+        while a[i] == b[i]:
+            i += 1
+        while a[j - 1] == b[j - 1]:
+            j -= 1
+        if i // 4 < x0:
+            x0 = i // 4
+        if -(-j // 4) > x1:
+            x1 = -(-j // 4)
+    lw, lh = x1 - x0, y1 - y0
+
+    stream = bytearray()
+    table = []
+    head = 16 + 4 * lh                              # preamble + row seek table
+    for y in range(y0, y1):
+        table.append(head + len(stream))
+        base = y * stride + x0 * 4
+        for c in range(4):
+            o = base + _DELTA_CH[c]
+            ca = rgba[o:o + lw * 4:4]
+            pa = prev[o:o + lw * 4:4]
+            if ca == pa:                            # channel unchanged on this row
+                stream.append(0)
+            else:
+                _delta_channel(ca, pa, stream)
+    stream.append(0x40)                             # end of frame
+
+    body = (struct.pack("<3I", len(stream), lw, lh) + bytes((0x88, 0x88, 0, 0))
+            + struct.pack("<%dI" % lh, *table) + bytes(stream))
+    layer = (FRAME_HDR + LAYER_HDR, len(body), x0, y0, x1, y1, 0, 0)
+    return _gi_header(w, h, 5, masks, [layer]) + body
+
+
+# ------------------------------------------------------------------- quantisation
+# The RLE formats are lossy by construction: colour drops to R5G6B5 and alpha to
+# 6 bits, so `decode(encode(png)) == png` cannot hold. What must hold instead is
+# that encoding only quantises - decoding returns that quantised image exactly.
+
+_T_F8 = bytes(i & 0xF8 for i in range(256))
+_T_FC = bytes(i & 0xFC for i in range(256))
+# a6 = 63-(a>>2) decodes back as 4*(63-a6), so alpha lands on a multiple of 4 and
+# tops out at 252 - except for 255, which the colour layer supplies untouched.
+_T_A6 = bytes(255 if i == 255 else (i >> 2) * 4 for i in range(256))
+
+
+def quantise_gi(w, h, rgba, fmt):
+    """The exact RGBA that decoding our own `fmt` output has to give back."""
+    if fmt in ("argb", "indexed", "delta"):
+        return bytes(rgba)                          # lossless formats
+    out = bytearray(rgba)
+    out[0::4] = bytes(rgba[0::4]).translate(_T_F8)
+    out[1::4] = bytes(rgba[1::4]).translate(_T_FC)
+    out[2::4] = bytes(rgba[2::4]).translate(_T_F8)
+    if fmt == "rgb565":
+        out[3::4] = b"\xff" * (w * h)               # the format has no alpha
+        return bytes(out)
+    if fmt == "rle565":                             # opaque, except that a fully
+        out[3::4] = bytes([255 if a else 0          # clear pixel stays clear
+                           for a in bytes(rgba[3::4])])
+    else:                                           # rle-alpha / rle-indexed
+        out[3::4] = bytes(rgba[3::4]).translate(_T_A6)
+    for i in range(3, len(out), 4):                 # invisible -> fully clear,
+        if not out[i]:                              # which is what a skipped
+            out[i - 3] = out[i - 2] = out[i - 1] = 0    # pixel decodes to
+    return bytes(out)
+
+
+_GI_FORMATS = {"argb": encode_gi_argb, "rgb565": encode_gi_rgb565,
+               "indexed": encode_gi_indexed, "rle565": encode_gi_rle565,
+               "rle-alpha": encode_gi_rle_alpha, "rle-indexed": encode_gi_rle_indexed}
 
 
 def encode_gi(w, h, rgba, fmt="argb"):
+    if fmt == "delta":
+        raise ValueError("delta frames only exist inside a GAI - "
+                         "encode the frame directory, not a single PNG")
     try:
-        return _GI_FORMATS[fmt](w, h, rgba)
+        fn = _GI_FORMATS[fmt]
     except KeyError:
         raise ValueError("unknown gi format %r" % fmt)
+    return fn(w, h, rgba)
 
 
 def _gai_wait(times):
@@ -936,12 +1313,17 @@ def _gai_wait(times):
     return wd
 
 
-def encode_gai(frames, times):
-    """Build a GAI whose every frame is a full type-0 ARGB keyframe (no deltas).
+def encode_gai(frames, times, fmt="argb"):
+    """Build a GAI from full frames.
 
     frames: [(w, h, rgba), ...] all the same size; times: per-frame ms.
     Layout: GAIHeader, frame table, timing block, then the frame blobs -
     exactly the order the game's loader walks.
+
+    Every frame is a keyframe in `fmt`, except under fmt="delta": there frame 0
+    is a lossless ARGB keyframe and the rest are type-5 deltas against the
+    frame before them. Since both halves are lossless the chain stays exact, so
+    a delta GAI still round-trips byte for byte.
     """
     W, H = frames[0][0], frames[0][1]
     for (w, h, _rgba) in frames:
@@ -954,8 +1336,14 @@ def encode_gai(frames, times):
     header = struct.pack("<12I", GAI_SIG, 1, 0, 0, W, H, n, 0, wait_seek, len(wait), 0, 0)
     table = b""
     blobs = []
+    prev = None
     for (w, h, rgba) in frames:
-        blob = encode_gi_argb(w, h, rgba)
+        if fmt == "delta":
+            blob = (encode_delta_frame(w, h, rgba, prev) if prev is not None
+                    else encode_gi_argb(w, h, rgba))
+            prev = rgba
+        else:
+            blob = encode_gi(w, h, rgba, fmt)
         table += struct.pack("<2I", seek, len(blob))
         blobs.append(blob)
         seek += len(blob)
@@ -1215,22 +1603,26 @@ def _gather_anim_frames(input_dir, default_time):
 
 
 def _selfcheck_gi(blob, w, h, rgba, fmt):
-    """Decode the freshly-encoded blob and confirm it round-trips (lossless fmts)."""
-    if fmt == "rgb565":
-        return None                                    # lossy by design - no strict check
+    """Decode the freshly-encoded blob and confirm it matches the quantised input.
+
+    For the lossless formats that is the source PNG itself; for the lossy ones
+    it is what `quantise_gi` says the format can represent, so the check stays
+    strict instead of being skipped.
+    """
     cv = decode_gi(blob)
-    if cv.w != w or cv.h != h or bytes(cv.buf) != bytes(rgba):
-        return "round-trip mismatch (decoded image differs from source PNG)"
+    if cv.w != w or cv.h != h or bytes(cv.buf) != quantise_gi(w, h, rgba, fmt):
+        return "round-trip mismatch (decoded image differs from the quantised source)"
     return None
 
 
-def _selfcheck_anim(blob, frames):
+def _selfcheck_anim(blob, frames, fmt="argb"):
     sig = _u32(blob, 0)
     got = decode_gai(blob)[0] if sig == GAI_SIG else decode_hai(blob)[0]
     if len(got) != len(frames):
         return "round-trip frame count %d != %d" % (len(got), len(frames))
     for i, (cv, (w, h, rgba)) in enumerate(zip(got, frames)):
-        if cv.w != w or cv.h != h or bytes(cv.buf) != bytes(rgba):
+        want = rgba if sig == HAI_SIG else quantise_gi(w, h, rgba, fmt)
+        if cv.w != w or cv.h != h or bytes(cv.buf) != bytes(want):
             return "round-trip mismatch on frame %d" % i
     return None
 
@@ -1262,12 +1654,12 @@ def _encode_single_anim(input_dir, out, ext, args):
         blob = encode_hai(frames)
         kind = "hai"
     else:
-        blob = encode_gai(frames, times)
+        blob = encode_gai(frames, times, args.format)
         kind = "gai"
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     with open(out, "wb") as f:
         f.write(blob)
-    problem = _selfcheck_anim(blob, frames)
+    problem = _selfcheck_anim(blob, frames, args.format)
     print("encoded %d frames -> %s (%dx%d, %s)%s"
           % (len(frames), out, frames[0][0], frames[0][1], kind,
              "" if not problem else "  [WARN %s]" % problem), file=sys.stderr)
@@ -1331,11 +1723,12 @@ def _encode_tree(root, outroot, args):
             relname = os.path.join(rel, stem) if rel != "." else stem
             try:
                 frames = [read_png(os.path.join(dirpath, nm)) for nm in names]
-                blob = encode_hai(frames) if kind == "hai" else encode_gai(frames, times)
+                blob = (encode_hai(frames) if kind == "hai"
+                        else encode_gai(frames, times, args.format))
                 os.makedirs(outdir, exist_ok=True)
                 with open(os.path.join(outdir, stem + "." + kind), "wb") as f:
                     f.write(blob)
-                problem = _selfcheck_anim(blob, frames)
+                problem = _selfcheck_anim(blob, frames, args.format)
                 if problem:
                     warn += 1
                     print("  WARN  %s.%s: %s" % (relname, kind, problem))
@@ -1351,11 +1744,12 @@ def _encode_tree(root, outroot, args):
             relname = os.path.join(rel, stem) if rel != "." else stem
             try:
                 w, h, rgba = read_png(os.path.join(dirpath, nm))
-                blob = encode_gi(w, h, rgba, args.format)
+                fmt = "argb" if args.format == "delta" else args.format
+                blob = encode_gi(w, h, rgba, fmt)
                 os.makedirs(outdir, exist_ok=True)
                 with open(os.path.join(outdir, stem + ".gi"), "wb") as f:
                     f.write(blob)
-                problem = _selfcheck_gi(blob, w, h, rgba, args.format)
+                problem = _selfcheck_gi(blob, w, h, rgba, fmt)
                 if problem:
                     warn += 1
                     print("  WARN  %s.gi: %s" % (relname, problem))
@@ -1419,10 +1813,11 @@ def _verify_gi(data):
             problems.append("type4 indices %d != size %d" % (w * ht, L0[1]))
     elif typ == 5:
         L = layers[0]
-        if L[1]:
+        if L[1]:                                   # the 0x40 terminator lands on
             end = decode_delta(cv.copy(), norm[0][2], norm[0][3], data, L[0])
-            if not (L[0] <= end <= L[0] + L[1]):
-                problems.append("type5 delta overran layer size")
+            if end - L[0] != L[1]:                 # the layer boundary exactly -
+                problems.append("type5 delta consumed %d != size %d"    # checked
+                                % (end - L[0], L[1]))                   # on stock
     elif typ == 6:
         L = layers[0]
         if L[1]:                                   # the bit stream ends exactly
@@ -1528,9 +1923,14 @@ def main(argv=None):
                                  "or a whole decoded tree")
     p.add_argument("out", help="output .gi/.gai/.hai for a single item, or a "
                                "directory to rebuild the whole tree into")
-    p.add_argument("--format", choices=("argb", "rgb565", "indexed"), default="argb",
-                   help="gi encoding: argb=lossless (default), rgb565=compact opaque, "
-                        "indexed=type4 (lossless <=256 colours)")
+    p.add_argument("--format", choices=("argb", "rgb565", "indexed", "rle565",
+                                        "rle-alpha", "rle-indexed", "delta"),
+                   default="argb",
+                   help="frame encoding. Lossless: argb=type0 (default), "
+                        "indexed=type4 (<=256 colours), delta=type5 deltas inside "
+                        "a GAI. Lossy but compact, the shapes the game ships: "
+                        "rgb565=type0 16-bit opaque, rle565=type1, "
+                        "rle-alpha=type2 (native sprite), rle-indexed=type3")
     p.add_argument("--time", type=int, default=HAI_FRAME_TIME,
                    help="per-frame time in ms when no .times.json is present (default 50)")
     p.set_defaults(func=cmd_encode)
