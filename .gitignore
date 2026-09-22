@@ -18,6 +18,10 @@ __pycache__/
 # Сторонние утилиты (не распространяем чужие бинари) — положить локально
 /RScript_*/
 /BlockParEditor_*/
+/RangersViewer*/
+/Cassandra*/
+/rsmc/
+/rsmc.exe
 /ResEditor_*/
 /ResEditor_*.zip
 

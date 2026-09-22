@@ -128,14 +128,25 @@ def _press_ok(hwnd):
         user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
 
 
+def _build_args(rscript, rson_path, out_scr, tmp_dialogs):
+    """Форма аргументов компиляции зависит от версии RScript (4.14f сменил её,
+    на старой форме висит модалка) — берём сборщик из run.py, чтобы правило
+    жило в одном месте. Standalone-запуск без run.py падает на старую форму."""
+    try:
+        import run as runner
+        return runner._rscript_build_args(rscript, rson_path, out_scr, tmp_dialogs)
+    except Exception:
+        return [str(rscript), '--cli', '-b', '-f', str(rson_path), str(out_scr),
+                str(tmp_dialogs)]
+
+
 def run_rscript_watched(rscript, rson_path, out_scr, timeout=30, poll=0.25):
-    """Run RScript --cli -b -f, harvesting modal dialogs. Returns
+    """Run RScript --cli build, harvesting modal dialogs. Returns
     (rc_or_None, dialog_texts, output_exists)."""
     tmp_dialogs = Path(out_scr).with_suffix('.dialogs.txt')
     tmp_dialogs.write_bytes(b'')
     proc = subprocess.Popen(
-        [str(rscript), '--cli', '-b', '-f', str(rson_path), str(out_scr),
-         str(tmp_dialogs)],
+        _build_args(rscript, rson_path, out_scr, tmp_dialogs),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     dialogs = []

@@ -23,6 +23,12 @@ Examples:
   python run.py blockpar path/to/Mod            # все *.dat -> *.txt
   python run.py blockpar path/to/Mod --to-dat   # все *.txt -> *.dat
 
+  # Экспорт rson → текстовый .rsm и headless-декомпиляция (RScript 4.14f+):
+  python run.py rsm Mod.rson                 # -> Mod.rsm рядом
+  python run.py rsm Mod.rson out.rsm --split # -> каталог out/ с модулями
+  python run.py rsdec Mod.scr                # -> Mod.rson (декомпилятор RScript)
+  python run.py rsdec Mod.scr out.rson --langdat CFG/Rus/Lang.dat
+
   # PKG-архивы ресурсов (замена pack/unpack из ResEditor):
   python run.py pkg list   DATA/english.pkg
   python run.py pkg unpack DATA/english.pkg out_dir/
@@ -54,22 +60,70 @@ import decompiler
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _find_rscript(hint):
+# Компилятор для --check: 4.10f — тот, на котором снята базовая статистика
+# MATCH 315/321, поэтому он остаётся первым в поиске. Более новые сборки нужны
+# для -x/-d и подхватываются, когда старых на машине нет или просят modern=True.
+_RSCRIPT_BUILD_ORDER = ['RScript_4.10f', 'RScript_4.5f']
+_RSCRIPT_ANY_ORDER = ['RScript_4.14f', 'RScript_4.13f', 'RScript_4.12f',
+                      'RScript_4.10f', 'RScript_4.5f']
+
+_RSCRIPT_CAPS = {}
+
+
+def _rscript_is_modern(rscript):
+    """True если RScript.exe говорит на CLI 4.14f+.
+
+    Формы вызова несовместимы: 4.13f и старше принимают `-b -f <rson> <scr> <txt>`,
+    4.14f — `-b <rson> <scr> <txt> --full`, а на старую форму открывает модальное
+    окно и висит до таймаута. Версию не парсим (имя папки может быть любым) —
+    пробуем бинарь на ключи, появившиеся только в 4.14f (--split/--langdat).
+    Ключ --full не годится: в старых версиях это длинный синоним -f.
+    """
+    key = str(rscript)
+    if key not in _RSCRIPT_CAPS:
+        modern = False
+        try:
+            data = Path(rscript).read_bytes()
+            modern = any(n.encode('utf-16-le') in data or n.encode('ascii') in data
+                         for n in ('--split', '--langdat'))
+        except Exception:
+            pass
+        _RSCRIPT_CAPS[key] = modern
+    return _RSCRIPT_CAPS[key]
+
+
+def _rscript_build_args(rscript, rson_path, out_scr, dialogs_txt):
+    """Аргументы компиляции для той формы CLI, которую понимает этот бинарь."""
+    if _rscript_is_modern(rscript):
+        return [str(rscript), '--cli', '-b', str(rson_path), str(out_scr),
+                str(dialogs_txt), '--full']
+    return [str(rscript), '--cli', '-b', '-f', str(rson_path), str(out_scr),
+            str(dialogs_txt)]
+
+
+def _find_rscript(hint, modern=False):
+    """Найти RScript.exe. modern=True — только сборка с CLI 4.14f+ (-x/-d)."""
     if hint:
         p = Path(hint)
-        return p if p.exists() else None
-    for name in ['RScript_4.10f/RScript.exe', 'RScript_4.5f/RScript.exe']:
-        p = HERE / name
-        if p.exists():
+        if not p.exists():
+            return None
+        return p if (not modern or _rscript_is_modern(p)) else None
+    order = _RSCRIPT_ANY_ORDER if modern else (_RSCRIPT_BUILD_ORDER + _RSCRIPT_ANY_ORDER)
+    for name in order:
+        p = HERE / name / 'RScript.exe'
+        if p.exists() and (not modern or _rscript_is_modern(p)):
             return p
     return None
 
 
 def _find_blockpar(hint):
+    # 1.9 первым намеренно: 2.0 пишет dat→txt в UTF-16LE+BOM (1.9 — cp1251),
+    # так что порядок держит вывод прежним. Читатели BOM всё равно сниффят.
     if hint:
         p = Path(hint)
         return p if p.exists() else None
-    for name in ['BlockParEditor_1.9/BlockParEditor.exe']:
+    for name in ['BlockParEditor_1.9/BlockParEditor.exe',
+                 'BlockParEditor_2.0/BlockParEditor.exe']:
         p = HERE / name
         if p.exists():
             return p
@@ -234,7 +288,7 @@ def _run_rscript(rscript, rson_path, out_scr, lang_txt=None, timeout=30):
         # presses OK and captures their text.
         import _dlgwatch
         proc = subprocess.Popen(
-            [str(rscript), '--cli', '-b', '-f', str(rson_path), str(out_scr), str(tmp_dialogs)],
+            _rscript_build_args(rscript, rson_path, out_scr, tmp_dialogs),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         deadline = time.time() + timeout
@@ -279,6 +333,100 @@ def _run_rscript(rscript, rson_path, out_scr, lang_txt=None, timeout=30):
         if tmp_dialogs.exists():
             tmp_dialogs.unlink()
     return rc, err, writeback
+
+
+# ---------------------------------------------------------------------------
+# RScript 4.14f+: экспорт rson → .rsm и headless-декомпиляция .scr → .rson
+# ---------------------------------------------------------------------------
+
+def _run_rscript_watched(rscript, args, timeout):
+    """Запустить RScript.exe с готовыми аргументами, гася модалки.
+
+    Возвращает (rc, err): rc=-1 — убит по таймауту (модалка, которую не удалось
+    закрыть), rc=-2 — исключение. 'Runtime error 217' на выходе безвреден и в err
+    не попадает.
+    """
+    rc, dialogs = 0, []
+    try:
+        import _dlgwatch
+    except Exception as e:
+        return -2, f'_dlgwatch недоступен: {e}'
+    try:
+        proc = subprocess.Popen([str(rscript)] + [str(a) for a in args],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.time() + timeout
+        seen = set()
+        while True:
+            rc = proc.poll()
+            for hwnd in _dlgwatch._find_dialogs(proc.pid):
+                txt = _dlgwatch._dialog_text(hwnd)
+                if txt not in seen:
+                    seen.add(txt)
+                    if 'Runtime error 217' not in txt:
+                        dialogs.append(txt)
+                _dlgwatch._press_ok(hwnd)
+            if rc is not None:
+                break
+            if time.time() > deadline:
+                proc.kill()
+                proc.wait(5)
+                rc = -1
+                break
+            time.sleep(0.2)
+    except Exception as e:
+        return -2, str(e)
+    return rc, '; '.join(dialogs)[:300]
+
+
+def run_rscript_export_rsm(rscript, rson_path, out_rsm=None, split=False, timeout=180):
+    """rson → .rsm (`--cli -x`). split=True кладёт модули в каталог out_rsm без
+    расширения (main/vars/world/places/states/dialogs/code_*.rsm).
+
+    Возвращает (ok, message): путь результата или текст ошибки.
+    """
+    rson_path = Path(rson_path)
+    if not rson_path.exists():
+        return False, f'не найден: {rson_path}'
+    if not _rscript_is_modern(rscript):
+        return False, 'экспорт в .rsm требует RScript 4.14f+ (укажите --rscript)'
+    out_rsm = Path(out_rsm) if out_rsm else rson_path.with_suffix('.rsm')
+    # При --split RScript пишет каталог с именем файла без расширения.
+    target = out_rsm.with_suffix('') if split else out_rsm
+    args = ['--cli', '-x', rson_path, out_rsm] + (['--split'] if split else [])
+    start = time.time()
+    rc, err = _run_rscript_watched(rscript, args, timeout)
+    if err:
+        return False, err
+    if not target.exists():
+        return False, f'вывод не создан ({target.name}), rc={rc}'
+    if not split and target.stat().st_mtime < start - 2:
+        return False, f'вывод не обновлён ({target.name}), rc={rc}'
+    return True, str(target)
+
+
+def run_rscript_decompile(rscript, scr_path, out_rson=None, lang_dat=None, timeout=180):
+    """.scr → .rson штатным декомпилятором RScript (`--cli -d`).
+
+    Не замена нашему decompiler.py (RScript теряет ScriptName, ставит
+    ExportLangDat=true, смещает Pos.y, кладёт DAnswer в Msg) — это второе мнение
+    для сверки структуры.
+    """
+    scr_path = Path(scr_path)
+    if not scr_path.exists():
+        return False, f'не найден: {scr_path}'
+    if not _rscript_is_modern(rscript):
+        return False, 'headless-декомпиляция требует RScript 4.14f+ (укажите --rscript)'
+    out_rson = Path(out_rson) if out_rson else scr_path.with_suffix('.rson')
+    args = ['--cli', '-d', scr_path, out_rson]
+    if lang_dat:
+        args += ['--langdat', str(lang_dat)]
+    start = time.time()
+    rc, err = _run_rscript_watched(rscript, args, timeout)
+    if err:
+        return False, err
+    if not out_rson.exists() or out_rson.stat().st_mtime < start - 2:
+        return False, f'вывод не создан ({out_rson.name}), rc={rc}'
+    return True, str(out_rson)
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +1052,51 @@ def cmd_blockpar(argv):
 
 
 # ---------------------------------------------------------------------------
+# `rsm` / `rsdec` subcommands: RScript 4.14f+ CLI (-x export, -d decompile)
+# ---------------------------------------------------------------------------
+
+def _cmd_rscript_new(argv, mode):
+    """Общий парсер для `run.py rsm` (-x) и `run.py rsdec` (-d)."""
+    is_rsm = mode == 'rsm'
+    ap = argparse.ArgumentParser(
+        prog=f'run.py {mode}',
+        description=('Экспорт rson → текстовый .rsm (RScript --cli -x). Компилируется '
+                     'обратно в .scr отдельным rsmc.exe.' if is_rsm else
+                     'Декомпиляция .scr → .rson штатным RScript (--cli -d) — второе '
+                     'мнение к нашему decompiler.py, не замена ему.'))
+    ap.add_argument('source', help='Файл .rson' if is_rsm else 'Файл .scr')
+    ap.add_argument('dest', nargs='?', default=None,
+                    help='Путь результата (по умолчанию рядом с source)')
+    if is_rsm:
+        ap.add_argument('--split', action='store_true',
+                        help='Разбить на модули: каталог main/vars/world/places/'
+                             'states/dialogs/code_*.rsm')
+    else:
+        ap.add_argument('--langdat', default=None, metavar='FILE',
+                        help='Lang.dat для подстановки текстов диалогов')
+    ap.add_argument('--rscript', default=None, metavar='EXE',
+                    help='Путь к RScript.exe 4.14f+ (авто-поиск если не задан)')
+    ap.add_argument('--timeout', type=int, default=180, metavar='SEC')
+    a = ap.parse_args(argv)
+
+    rscript = _find_rscript(a.rscript, modern=True)
+    if rscript is None:
+        print('ERROR: не найден RScript.exe с CLI 4.14f+ (ключи -x/-d). Положите '
+              'RScript_4.14f/ рядом с run.py или укажите --rscript.', file=sys.stderr)
+        sys.exit(1)
+
+    if is_rsm:
+        ok, msg = run_rscript_export_rsm(rscript, a.source, a.dest, a.split, a.timeout)
+    else:
+        ok, msg = run_rscript_decompile(rscript, a.source, a.dest, a.langdat, a.timeout)
+    if ok:
+        print(f'OK: {Path(a.source).name} -> {msg}')
+    else:
+        print(f'FAIL: {a.source}: {msg}', file=sys.stderr)
+        sys.exit(2)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1013,9 +1206,12 @@ def main():
 
 if __name__ == '__main__':
     # Subcommands: `blockpar` (dat<->txt), `pkg` (.pkg pack/unpack),
-    # `gi` (gi/gai/hai image -> PNG); everything else is the SCR→RSON runner.
+    # `gi` (gi/gai/hai image -> PNG), `rsm`/`rsdec` (RScript 4.14f+ CLI);
+    # everything else is the SCR→RSON runner.
     if len(sys.argv) > 1 and sys.argv[1] == 'blockpar':
         cmd_blockpar(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] in ('rsm', 'rsdec'):
+        _cmd_rscript_new(sys.argv[2:], sys.argv[1])
     elif len(sys.argv) > 1 and sys.argv[1] == 'pkg':
         import srpkg
         sys.exit(srpkg.main(sys.argv[2:]))
