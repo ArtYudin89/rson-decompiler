@@ -53,7 +53,9 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 HERE = Path(__file__).resolve().parent
 
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE / 'vendor'))
 import decompiler
+import srblockpar   # свой разбор .dat; копия библиотеки из sr-lab, см. vendor/srblockpar
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +160,22 @@ def _is_text_dialogs(path):
 
 
 def _convert_lang_dat(lang_dat, blockpar, out_txt):
-    """Convert Lang.dat → Lang.txt using BlockParEditor. Returns True on success."""
-    if blockpar is None or not lang_dat.exists():
+    """Convert Lang.dat → Lang.txt. Returns True on success.
+
+    Uses our own srblockpar (no external tool, no modal dialogs); falls back to
+    BlockParEditor only if a path was given and our reader refused the file.
+    """
+    if not lang_dat.exists():
+        return False
+    try:
+        # cp1251, как писал BlockParEditor 1.9: этим Lang.txt дальше кормят
+        # RScript, и кодировку вывода менять нельзя. Знаки вне cp1251 уводят
+        # файл в UTF-16 (читатели сниффят метку), а не теряются молча.
+        srblockpar.dat_to_text(lang_dat, out_txt, ansi=True)
+        return out_txt.exists()
+    except (srblockpar.DatError, srblockpar.BlockParError, srblockpar.ZLError, OSError):
+        pass
+    if blockpar is None:
         return False
     try:
         subprocess.run(
@@ -171,8 +187,45 @@ def _convert_lang_dat(lang_dat, blockpar, out_txt):
         return False
 
 
+def _blockpar_convert(source, dest=None):
+    """Convert a BlockPar file with our own srblockpar — no external tool.
+
+    Direction is by the source extension: .dat → .txt (decode) and .txt → .dat
+    (encode). The tree kind of an encoded file follows the TARGET name, the way
+    the game expects it: CacheData is a data tree, everything else a BlockPar
+    one — this is exactly where BlockParEditor silently writes an empty file.
+
+    Returns (ok: bool, message: str) — the output path on success, the reason
+    on failure. Values containing `//` are reported: the text form cannot keep
+    them (the game's own parser cuts them), so a round-trip through .txt loses
+    them silently.
+    """
+    source = Path(source)
+    if not source.exists():
+        return False, f'source not found: {source}'
+    encoding = source.suffix.lower() == '.txt'
+    out = Path(dest) if dest is not None else source.with_suffix(
+        '.dat' if encoding else '.txt')
+    try:
+        if encoding:
+            srblockpar.text_to_dat(source, out)
+        else:
+            _path, lossy = srblockpar.dat_to_text(source, out, ansi=True)
+            for key, value in lossy[:5]:
+                print(f'  WARN  {source.name}: значение {key} содержит // — '
+                      f'в .txt оно обрежется: {value[:60]!r}', file=sys.stderr)
+    except (srblockpar.DatError, srblockpar.BlockParError, srblockpar.ZLError) as e:
+        return False, str(e)
+    except OSError as e:
+        return False, f'{type(e).__name__}: {e}'
+    return True, str(out)
+
+
 def _run_blockpar(blockpar, source, dest=None, timeout=60):
-    """Convert a BlockPar file with BlockParEditor.exe --cli --convert.
+    """Convert a BlockPar file. With blockpar=None uses our own srblockpar.
+
+    A path to BlockParEditor.exe switches to the external editor instead — kept
+    for comparing the two readers, it is no longer needed for the work itself.
 
     Direction is chosen by BlockParEditor from the source extension:
     .dat → .txt (decode) and .txt → .dat (encode). `dest` is optional; when
@@ -187,6 +240,8 @@ def _run_blockpar(blockpar, source, dest=None, timeout=60):
     Returns (ok: bool, message: str) — message is the output path on success
     or the captured error text on failure.
     """
+    if blockpar is None:
+        return _blockpar_convert(source, dest)
     source = Path(source)
     if not source.exists():
         return False, f'source not found: {source}'
@@ -969,7 +1024,7 @@ def process_scr(scr, base_dir, out_dir, rscript, blockpar, check, timeout):
 
 
 # ---------------------------------------------------------------------------
-# `blockpar` subcommand: dat<->txt via BlockParEditor.exe
+# `blockpar` subcommand: dat<->txt via our own srblockpar
 # ---------------------------------------------------------------------------
 
 def cmd_blockpar(argv):
@@ -982,10 +1037,10 @@ def cmd_blockpar(argv):
     """
     ap = argparse.ArgumentParser(
         prog='run.py blockpar',
-        description='Конвертация BlockPar dat<->txt через BlockParEditor.exe '
-                    '(--cli --convert). Одиночный файл: направление по расширению '
-                    '(.dat→.txt, .txt→.dat). Каталог: рекурсивный батч, результат '
-                    'всегда рядом с исходным файлом.')
+        description='Конвертация BlockPar dat<->txt своим кодом (srblockpar). '
+                    'Одиночный файл: направление по расширению (.dat→.txt, '
+                    '.txt→.dat). Каталог: рекурсивный батч, результат всегда '
+                    'рядом с исходным файлом.')
     ap.add_argument('source',
                     help='Файл .dat/.txt (CacheData/Main/Lang…) ИЛИ каталог для '
                          'рекурсивного батча')
@@ -996,15 +1051,15 @@ def cmd_blockpar(argv):
                     help='Батч по каталогу: конвертировать все *.txt → *.dat '
                          '(по умолчанию все *.dat → *.txt)')
     ap.add_argument('--blockpar', default=None, metavar='EXE',
-                    help='Путь к BlockParEditor.exe (авто-поиск если не задан)')
+                    help='Конвертировать чужим BlockParEditor.exe вместо своего '
+                         'кода (нужно только для сверки)')
     ap.add_argument('--timeout', type=int, default=60, metavar='SEC',
-                    help='Таймаут на конвертацию одного файла (по умолчанию 60)')
+                    help='Таймаут на конвертацию одного файла чужим редактором')
     a = ap.parse_args(argv)
 
-    blockpar = _find_blockpar(a.blockpar)
-    if blockpar is None:
-        print('ERROR: BlockParEditor.exe не найден. Укажите путь через --blockpar '
-              'или положите BlockParEditor_1.9/ рядом с run.py.', file=sys.stderr)
+    blockpar = _find_blockpar(a.blockpar) if a.blockpar else None
+    if a.blockpar and blockpar is None:
+        print(f'ERROR: BlockParEditor.exe не найден по пути {a.blockpar}', file=sys.stderr)
         sys.exit(1)
 
     src = Path(a.source)
@@ -1137,8 +1192,7 @@ def main():
 
     if a.check and rscript is None:
         print('WARN: --check задан, но RScript.exe не найден. Проверка будет пропущена.')
-    if blockpar is None:
-        print('INFO: BlockParEditor.exe не найден — Lang.dat не будет конвертирован в Lang.txt автоматически.')
+    # Lang.dat разбирается своим кодом; редактор нужен только для сверки.
 
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)

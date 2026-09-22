@@ -1,0 +1,17 @@
+{
+  "package": "srblockpar",
+  "version": "1.0.0",
+  "source": "sr-lab/srblockpar (локальный репозиторий, не публикуется)",
+  "source_commit": "3389aeb",
+  "files": {
+    "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "README.md": "c077dc4f736d4546393f21da94448cd5f6cdd67627c82350d1817ccc95453494",
+    "__init__.py": "754338419a908741a54a410880287f2976996ceea9bb9e3199a427169eeec583",
+    "api.py": "bebba4accffaf7dcb4fc5849f43de8dde0b5b66dec8e8ae6d76a21e08af7f4ad",
+    "blockpar.py": "80f8dbff0eca37c32526b3375432a5cacc89b5e2a946ace81ef287387cadb352",
+    "datfile.py": "1928098122c2fc207e2fad04510d363b9bc2bb557a0da6601ad4f9b2375f82b3",
+    "docs/dat-format.md": "626fc9c5b501aa209dac60f7a7d93948a68e3507a5a995d6ab1e30e5115fd692",
+    "zl.py": "3fc6ace3ed8a959259639dfd06e3d544ff6d5b5223a89858cc6f1d71d4a89b2e"
+  },
+  "note": "Копия. Не править здесь: правка вносится в sr-lab и раскладывается командой python tools/vendor.py"
+}
